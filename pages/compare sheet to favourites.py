@@ -47,4 +47,5 @@ for url in local_favourites_index.keys():
 for url in google_sheet_index.keys():
     if url not in local_favourites_index:
         name = google_sheet_index[url][0]
-        rite_col.markdown(f"No match: {name}-[{url}]({url})")
+        search_url = f"https://www.copperknob.co.uk/search?Search={name.replace(' ','+')}&Beat=-1&Level=Any&Wall=-1&Lang=Any&SearchType=Any"
+        rite_col.markdown(f"No match: {name}-[{url}]({search_url})")

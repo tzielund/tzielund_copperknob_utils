@@ -1,47 +1,52 @@
 # Reads a stepsheet and converts it to a JSON structure
+import re
 
 import streamlit
 import requests
 from bs4 import BeautifulSoup
 
-import stepsheet_cache_util
+import stepsheet_util
+from stepsheet_util import Stepsheet
 from google_sheet_util import read_google_sheet
 
 # Read the google sheet with compiled favourites
 df = read_google_sheet()
 
-# Choose a dance to parse
-dance_name = streamlit.selectbox("Choose a dance to parse", df[0])
-
+# Choose a dance to look at more closely
+dance_name = streamlit.selectbox("Choose a dance to review", df[0])
 dance_url = df[df[0] == dance_name][7].values[0]
 
-stepsheet_page_data = stepsheet_cache_util.get_cached_stepsheet(dance_url)
-# Try parsing without BeautifulSoup
-lines = stepsheet_page_data.text.split("\n")
-sheet_content = []
-in_sheetcontent = False
-for line in lines:
-    if line.strip() == '<div class="sheetcontent">':
-        in_sheetcontent = True
-    if in_sheetcontent and line.strip().startswith("<b>Last Update:"):
-        in_sheetcontent = False
-    if in_sheetcontent:
-        sheet_content.append(line)
+# Show the copperknob URL
+streamlit.write(f"Copperknob URL: {dance_url}")
 
-streamlit.write(sheet_content)
+stepsheet = Stepsheet(dance_url)
+stepsheet.parse()
+
+# Show the metadata
+metadata = stepsheet.metadata
+streamlit.write("Metadata")
+streamlit.json(metadata)
+
+show_content = streamlit.checkbox("Show stepsheet content")
+if show_content:
+    stepsheet_content = stepsheet.sheet_content
+    content_as_a_string = stepsheet_content
+    content_viewer = streamlit.text_area("Stepsheet content", content_as_a_string, disabled=True)
+
+show_steps_checkbox = streamlit.checkbox("Show steps")
+if show_steps_checkbox:
+    steps = stepsheet.steps
+    streamlit.write("Steps")
+    streamlit.json(steps)
+
+show_sections = streamlit.checkbox("Show sections")
+if show_sections:
+    sections = stepsheet.sections
+    streamlit.write("Sections")
+    streamlit.json(sections)
 
 
-
-wolf_soup = BeautifulSoup(wolf_data.text, 'html.parser')
-
-# streamlit.write(wolf_soup)
-
-# find <div class="sheetcontent"> and extract the text
-sheetcontent = wolf_soup.find("div", {"class": "sheetcontent"})
-
-# keep the span tags as they are
-sheetcontent_text = sheetcontent.text
-# locate all the step spans and desc spans
-sheetcontent_steps = sheetcontent.findChildren("span", {"class": "step"}, recursive=False)
-sheetcontent_descs = sheetcontent.findChildren("span", {"class": "desc"}, recursive=False)
-# these should be parallel arrays; make them into a dictionary
+# display each section
+for section in sections:
+    streamlit.write("Section")
+    streamlit.json(section)

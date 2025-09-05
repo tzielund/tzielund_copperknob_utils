@@ -11,6 +11,8 @@ python = ">=3.9,<3.9.7 || >3.9.7,<4.0"
 streamlit = "^1.41.1"
 bs4 = "^0.0.2"
 gspread = "^6.1.4"
+oauthlib = "^3.2.2"
+pyjwt = "^2.10.1"
 
 
 [build-system]
