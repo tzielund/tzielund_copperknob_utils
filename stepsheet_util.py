@@ -5,6 +5,7 @@ import re
 import requests
 import os
 from bs4 import BeautifulSoup as bs4
+import time
 
 stepsheet_cache_dir = "stepsheet_cache/"
 stepsheet_cache_file_extension = ".html"
@@ -27,21 +28,37 @@ class Stepsheet:
             self.id = url.split("/")[-2]
             self.name = url.split("/")[-1]
             self.page_data = self.get_cached_stepsheet()
+            self.parse()
 
     def verify_url(self):
         return self.url.startswith("https://www.copperknob.co.uk/stepsheets/")
+
+    def __check_cloudflare_block(self, page_data):
+        # Check if the page data indicates a Cloudflare block
+        if "used Cloudflare to restrict access" in page_data:
+            return True
+        return False
 
     def get_cached_stepsheet(self):
         # Use the last two parts of the URL to create a filename
         cache_filename = os.path.join(stepsheet_cache_dir, self.id + "_" + self.name + stepsheet_cache_file_extension)
         if os.path.exists(cache_filename):
             with open(cache_filename, "r") as cache_file:
-                return cache_file.read()
-        else:
+                contents = cache_file.read()
+                if self.__check_cloudflare_block(contents):
+                    pass  # stale/blocked cache — re-fetch below
+                else:
+                    return contents
+        stepsheet_data = requests.get(self.url)
+        stepsheet_text = stepsheet_data.text
+        if self.__check_cloudflare_block(stepsheet_text):
+            # wait a bit and try again
+            time.sleep(5)
             stepsheet_data = requests.get(self.url)
-            with open(cache_filename, "w") as cache_file:
-                cache_file.write(stepsheet_data.text)
-            return stepsheet_data.text
+            stepsheet_text = stepsheet_data.text
+        with open(cache_filename, "w") as cache_file:
+            cache_file.write(stepsheet_text)
+        return stepsheet_data.text
 
     def parse(self):
         if not self.is_valid:
@@ -49,9 +66,15 @@ class Stepsheet:
         self.full_bs = bs4(self.page_data, "html.parser")
         self.metadata = self.parse_metadata()
         self.sheet_content_bs = self.isolate_stepsheet_content()
-        self.sheet_content = self.sheet_content_bs.prettify()
-        self.steps = self.parse_stepsheet_into_steps()
-        self.sections = self.parse_stepsheet_into_sections()
+        if not self.sheet_content_bs:
+            self.sheet_contnet = None
+            self.steps = []
+            self.sections = []
+            self.is_valid = False
+        else:
+            self.sheet_content = self.sheet_content_bs.prettify()
+            self.steps = self.parse_stepsheet_into_steps()
+            self.sections = self.parse_stepsheet_into_sections()
         self.write_stepsheet_sections_to_file()
 
     def _isolate_metadata(self, bs, key, prefix):
@@ -61,15 +84,24 @@ class Stepsheet:
             text = found.text.strip()
             # Remove the prefix from the text and strip whitespace
             return text[len(prefix):].strip()
+        else:
+            if key == "sheetinfochoreographer":
+                # Try again with "sheetinfochoregrapher" (common misspelling)
+                return self._isolate_metadata(bs, "sheetinfochoregrapher", prefix)
         return None
 
     def parse_metadata(self):
         # Locate metadata in the HTML
         metadata = {}
         bs = self.full_bs
-        sheetinfo = bs.find("div", class_="sheetinfo")
+        # sheetinfo = bs.find("div", class_="sheetinfo")
         # print(sheetinfo.prettify())
         # raise Exception("Stopping here")
+
+        # Find the title which is in meta name="title" content="<title here>"
+        title_tag = bs.find("meta", attrs={"name": "title"})
+        if title_tag:
+            metadata["title"] = title_tag["content"].strip()
         # find sheetinfocount
         sheetinfocount = self._isolate_metadata(bs, "sheetinfocount", "Count:")
         if sheetinfocount:
@@ -85,6 +117,11 @@ class Stepsheet:
         # find sheetinfochoregrapher
         sheetinfochoreographer = self._isolate_metadata(bs, "sheetinfochoreographer", "Choreographer:")
         if sheetinfochoreographer:
+            # If it still starts with some portion of "Choreographer:", remove it
+            parts = sheetinfochoreographer.split(":", 1)
+            if len(parts) > 1:
+                if parts[0].strip().lower().endswith("pher"):
+                    sheetinfochoreographer = parts[1].strip()
             metadata["choreographer"] = sheetinfochoreographer
         # find sheetinfomusic
         sheetinfomusic = self._isolate_metadata(bs, "sheetinfomusic", "Music:")
@@ -166,6 +203,7 @@ class Stepsheet:
             "counts": 0
         }
         current_count = 0
+        step_count = -1
         for step in self.steps:
             # identify the first integer in the current step
             thisstep = step["counts"]

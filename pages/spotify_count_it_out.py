@@ -27,7 +27,7 @@ streamlit.json(song_list_selector)
 # Re-sort list with the songs that have local metadata first
 resorted_song_list = list()
 for song in song_list_selector:
-    trackid = song_list_selector[song].split("/")[-1]
+    trackid = song_list_selector[song].split("/")[-1].split("?")[0]
     if trackid in song_metadata:
         resorted_song_list.insert(0, song)
         # Also add the song name to the metadata
@@ -56,7 +56,7 @@ if not song_spotify_url:
     streamlit.stop()
 
 streamlit.write(f"Spotify URL: {song_spotify_url}")
-track_id = song_spotify_url.split("/")[-1]
+track_id = song_spotify_url.split("/")[-1].split("?")[0]
 
 # Now that we've got the song, get the beats
 streamlit.write("Fetching Beats")
