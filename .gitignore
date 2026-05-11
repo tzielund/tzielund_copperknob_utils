@@ -1,0 +1,35 @@
+# Secrets / credentials
+.environ.sh
+*.pem
+*-client*.json
+*client-secret*.json
+*client_secret*.json
+gcp_client_secret_*.json
+book-bingo-gbapi-*.json
+spotify_web_token.txt
+spotify_cache/
+
+# Local data dumps (user-specific, not source)
+favourites.csv
+donation_history_*.csv
+song_metadata.json
+*.xlsx
+*.mid
+tush_push_songs.txt
+tzielund_*/
+
+# Generated / cached output
+__pycache__/
+*.py[cod]
+spotify_cache/
+stepsheet_cache/
+stepsheet_parsed/
+stepsheet_curation/
+stepsheet_topn_cache/
+*_cache.json
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
