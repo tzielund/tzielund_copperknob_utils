@@ -17,6 +17,10 @@ INSERTION_POINTS_BAR_BEAT = [
 ]
 EXTRA_BEATS = 2
 
+# Rhythm-section tracks. During each inserted hold, the prior 2 beats of notes from
+# these tracks are duplicated into the gap so the rhythm continues instead of going silent.
+RHYTHM_TRACK_INDICES = [3, 9, 10, 11]
+
 NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 
 
@@ -142,26 +146,70 @@ def bar_beat_to_tick(bar, beat, numerator, ticks_per_beat):
     return total_beats * ticks_per_beat
 
 
-def insert_holds(mid: mido.MidiFile, insertion_ticks, extra_ticks) -> mido.MidiFile:
+def _collect_source_window_notes(orig_events, window_start, window_end):
+    """Return list of (note_on_abs, note_on_msg, note_off_abs, note_off_msg) for notes whose
+    note_on AND matching note_off both fall inside [window_start, window_end).
+    """
+    open_notes = {}
+    pairs = []
+    for abs_t, msg in orig_events:
+        if msg.type == "note_on" and getattr(msg, "velocity", 0) > 0:
+            open_notes.setdefault((msg.channel, msg.note), []).append((abs_t, msg))
+        elif msg.type == "note_off" or (msg.type == "note_on" and getattr(msg, "velocity", 0) == 0):
+            stack = open_notes.get((msg.channel, msg.note))
+            if stack:
+                on_abs, on_msg = stack.pop(0)
+                if window_start <= on_abs < window_end and window_start <= abs_t < window_end:
+                    pairs.append((on_abs, on_msg, abs_t, msg))
+    return pairs
+
+
+def insert_holds(mid: mido.MidiFile, insertion_ticks, extra_ticks, rhythm_track_indices=()) -> mido.MidiFile:
     """Return a new MidiFile with `extra_ticks` of delay inserted at each absolute tick in
     `insertion_ticks`. Held notes are extended automatically because their note_off events
     (which fall after each insertion point) get pushed later along with everything else.
+
+    For tracks in `rhythm_track_indices`, the notes in [T - extra_ticks, T) are also copied
+    into the inserted gap so the rhythm continues across the hold instead of going silent.
     """
     out = mido.MidiFile(ticks_per_beat=mid.ticks_per_beat, type=mid.type)
     sorted_points = sorted(insertion_ticks)
-    for track in mid.tracks:
-        new_track = mido.MidiTrack()
+    rhythm_set = set(rhythm_track_indices)
+
+    for track_idx, track in enumerate(mid.tracks):
+        # Decode to (abs_tick, msg) tuples
+        orig_events = []
         abs_tick = 0
-        remaining = list(sorted_points)
         for msg in track:
-            event_abs = abs_tick + msg.time
-            added = 0
-            while remaining and remaining[0] <= event_abs:
-                added += extra_ticks
-                remaining.pop(0)
-            new_msg = msg.copy(time=msg.time + added)
-            new_track.append(new_msg)
-            abs_tick = event_abs
+            abs_tick += msg.time
+            orig_events.append((abs_tick, msg))
+
+        # Shift every event by (number of insertion points at or before its time) * extra_ticks
+        new_events = []
+        for abs_t, msg in orig_events:
+            shift = extra_ticks * sum(1 for p in sorted_points if p <= abs_t)
+            new_events.append((abs_t + shift, msg))
+
+        # For rhythm tracks, also inject copies of the prior 2 beats into each gap.
+        # Gap for insertion i (0-indexed) occupies output ticks [T_i + i*extra, T_i + (i+1)*extra),
+        # so each copied event at original time t goes to output time t + (i+1)*extra.
+        if track_idx in rhythm_set:
+            for i, T_i in enumerate(sorted_points):
+                pairs = _collect_source_window_notes(orig_events, T_i - extra_ticks, T_i)
+                copy_offset = (i + 1) * extra_ticks
+                for on_abs, on_msg, off_abs, off_msg in pairs:
+                    new_events.append((on_abs + copy_offset, on_msg))
+                    new_events.append((off_abs + copy_offset, off_msg))
+
+        # Sort: stable by absolute time so original event order is preserved at ties.
+        new_events.sort(key=lambda e: e[0])
+
+        # Re-encode as delta times
+        new_track = mido.MidiTrack()
+        prev = 0
+        for abs_t, msg in new_events:
+            new_track.append(msg.copy(time=abs_t - prev))
+            prev = abs_t
         out.tracks.append(new_track)
     return out
 
@@ -171,7 +219,12 @@ def modify(mid: mido.MidiFile) -> mido.MidiFile:
         bar_beat_to_tick(bar, beat, numerator, mid.ticks_per_beat)
         for bar, beat in INSERTION_POINTS_BAR_BEAT
     ]
-    return insert_holds(mid, insertion_ticks, EXTRA_BEATS * mid.ticks_per_beat)
+    return insert_holds(
+        mid,
+        insertion_ticks,
+        EXTRA_BEATS * mid.ticks_per_beat,
+        rhythm_track_indices=RHYTHM_TRACK_INDICES,
+    )
 
 
 modified = modify(mid)
@@ -188,6 +241,8 @@ streamlit.dataframe(
     ]),
     hide_index=True,
 )
+rhythm_names = [f"{i} ({track_summaries[i]['name']})" for i in RHYTHM_TRACK_INDICES if i < len(track_summaries)]
+streamlit.write("Rhythm tracks copied into each gap: " + ", ".join(rhythm_names))
 streamlit.write(f"Original length: {mid.length:.2f}s → Modified length: {modified.length:.2f}s")
 
 streamlit.subheader("Output")
