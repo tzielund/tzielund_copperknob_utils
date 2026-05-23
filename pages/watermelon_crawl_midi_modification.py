@@ -21,6 +21,10 @@ EXTRA_BEATS = 2
 # these tracks are duplicated into the gap so the rhythm continues instead of going silent.
 RHYTHM_TRACK_INDICES = [3, 9, 10, 11]
 
+# Bar ranges to remove (1-indexed, inclusive on both ends) in the ORIGINAL timeline.
+# Events inside the range are dropped; events after are shifted earlier to close the gap.
+REMOVE_BAR_RANGES = [(35, 36)]
+
 NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 
 
@@ -146,6 +150,69 @@ def bar_beat_to_tick(bar, beat, numerator, ticks_per_beat):
     return total_beats * ticks_per_beat
 
 
+def remove_bar_range(mid: mido.MidiFile, bar_start, bar_end_inclusive, numerator) -> mido.MidiFile:
+    """Excise bars [bar_start, bar_end_inclusive] (1-indexed) from each track.
+
+    Events inside the range are dropped. Events after the range shift earlier by the deleted span.
+    For notes that start before the range and end inside it, the note_off is truncated to the
+    start of the deletion. Notes whose note_on falls inside the range are dropped entirely.
+    """
+    tpb = mid.ticks_per_beat
+    T_start = (bar_start - 1) * numerator * tpb
+    T_end = bar_end_inclusive * numerator * tpb
+    span = T_end - T_start
+
+    out = mido.MidiFile(ticks_per_beat=tpb, type=mid.type)
+    for track in mid.tracks:
+        orig_events = []
+        abs_t = 0
+        for msg in track:
+            abs_t += msg.time
+            orig_events.append((abs_t, msg))
+
+        # Pair note_ons with their note_offs
+        open_notes = {}
+        on_to_off_idx = {}
+        for idx, (at, msg) in enumerate(orig_events):
+            if msg.type == "note_on" and getattr(msg, "velocity", 0) > 0:
+                open_notes.setdefault((msg.channel, msg.note), []).append(idx)
+            elif msg.type == "note_off" or (msg.type == "note_on" and getattr(msg, "velocity", 0) == 0):
+                stack = open_notes.get((msg.channel, msg.note))
+                if stack:
+                    on_to_off_idx[stack.pop(0)] = idx
+
+        drop = set(idx for idx, (at, _) in enumerate(orig_events) if T_start <= at < T_end)
+        truncate_to = {}  # idx -> new abs time
+
+        for on_idx, off_idx in on_to_off_idx.items():
+            on_t = orig_events[on_idx][0]
+            off_t = orig_events[off_idx][0]
+            if T_start <= on_t < T_end:
+                drop.add(on_idx)
+                drop.add(off_idx)
+            elif on_t < T_start and T_start <= off_t < T_end:
+                drop.discard(off_idx)
+                truncate_to[off_idx] = T_start
+
+        new_events = []
+        for idx, (at, msg) in enumerate(orig_events):
+            if idx in drop:
+                continue
+            new_t = truncate_to.get(idx, at)
+            if new_t >= T_end:
+                new_t -= span
+            new_events.append((new_t, msg))
+
+        new_events.sort(key=lambda e: e[0])
+        new_track = mido.MidiTrack()
+        prev = 0
+        for at, msg in new_events:
+            new_track.append(msg.copy(time=at - prev))
+            prev = at
+        out.tracks.append(new_track)
+    return out
+
+
 def _collect_source_window_notes(orig_events, window_start, window_end):
     """Return list of (note_on_abs, note_on_msg, note_off_abs, note_off_msg) for notes whose
     note_on AND matching note_off both fall inside [window_start, window_end).
@@ -215,14 +282,27 @@ def insert_holds(mid: mido.MidiFile, insertion_ticks, extra_ticks, rhythm_track_
 
 
 def modify(mid: mido.MidiFile) -> mido.MidiFile:
+    tpb = mid.ticks_per_beat
     insertion_ticks = [
-        bar_beat_to_tick(bar, beat, numerator, mid.ticks_per_beat)
+        bar_beat_to_tick(bar, beat, numerator, tpb)
         for bar, beat in INSERTION_POINTS_BAR_BEAT
     ]
+
+    # Apply each removal in reverse order so earlier-bar offsets in REMOVE_BAR_RANGES don't
+    # invalidate later ones. Insertion points after a removal get shifted earlier by the
+    # removed span so they still land at the right musical moment in the shortened timeline.
+    working = mid
+    for bar_start, bar_end_inclusive in sorted(REMOVE_BAR_RANGES, reverse=True):
+        working = remove_bar_range(working, bar_start, bar_end_inclusive, numerator)
+        T_start = (bar_start - 1) * numerator * tpb
+        T_end = bar_end_inclusive * numerator * tpb
+        span = T_end - T_start
+        insertion_ticks = [t - span if t >= T_end else t for t in insertion_ticks]
+
     return insert_holds(
-        mid,
+        working,
         insertion_ticks,
-        EXTRA_BEATS * mid.ticks_per_beat,
+        EXTRA_BEATS * tpb,
         rhythm_track_indices=RHYTHM_TRACK_INDICES,
     )
 
@@ -243,6 +323,9 @@ streamlit.dataframe(
 )
 rhythm_names = [f"{i} ({track_summaries[i]['name']})" for i in RHYTHM_TRACK_INDICES if i < len(track_summaries)]
 streamlit.write("Rhythm tracks copied into each gap: " + ", ".join(rhythm_names))
+if REMOVE_BAR_RANGES:
+    streamlit.write("Removing bar ranges (original numbering, inclusive): " +
+                    ", ".join(f"{a}-{b}" for a, b in REMOVE_BAR_RANGES))
 streamlit.write(f"Original length: {mid.length:.2f}s → Modified length: {modified.length:.2f}s")
 
 streamlit.subheader("Output")
