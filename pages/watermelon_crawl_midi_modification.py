@@ -14,6 +14,8 @@ INSERTION_POINTS_BAR_BEAT = [
     (22, 5),
     (44, 3),
     (54, 1),
+    (74, 1),
+    (83, 1),
 ]
 EXTRA_BEATS = 2
 
