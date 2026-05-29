@@ -26,6 +26,7 @@ stepsheet_cache/
 stepsheet_parsed/
 stepsheet_curation/
 stepsheet_topn_cache/
+m4d_cache/
 *_cache.json
 
 # Editor / OS
