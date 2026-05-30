@@ -12,6 +12,8 @@ spotify_cache/
 # Local data dumps (user-specific, not source)
 favourites.csv
 donation_history_*.csv
+m4d_pattern_dances.csv
+Pattern-*.csv
 song_metadata.json
 *.xlsx
 *.mid
