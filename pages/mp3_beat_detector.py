@@ -12,12 +12,16 @@ import altair as alt
 import librosa
 import numpy as np
 import pandas as pd
+import soundfile as sf
 import streamlit as st
 
 st.set_page_config(page_title="MP3 Beat Detector", layout="wide")
 st.title("MP3 Beat Detector")
 
-source = st.radio("Audio source", ["Upload file", "Local path"], horizontal=True)
+DEFAULT_LOCAL_PATH = "/Users/tom.zielund/Music/Music/04 - Watermelon Crawl.mp3"
+CLICK_OUTPUT_DIR = "click_track_output/"
+
+source = st.radio("Audio source", ["Upload file", "Local path"], horizontal=True, index=1)
 audio_bytes = None
 filename = None
 
@@ -27,7 +31,7 @@ if source == "Upload file":
         audio_bytes = uploaded.getvalue()
         filename = uploaded.name
 else:
-    local_path = st.text_input("Path to audio file", value="")
+    local_path = st.text_input("Path to audio file", value=DEFAULT_LOCAL_PATH)
     if local_path:
         try:
             with open(local_path, "rb") as f:
@@ -108,3 +112,28 @@ st.download_button(
     file_name=(filename or "audio") + ".beats.csv",
     mime="text/csv",
 )
+
+st.subheader("Click track")
+click_volume = st.slider("Click volume (relative to music)", 0.0, 2.0, 0.5, step=0.1)
+gen_key = (filename, sr, len(y), len(beat_times), click_volume)
+
+os.makedirs(CLICK_OUTPUT_DIR, exist_ok=True)
+base = os.path.splitext(filename)[0] if filename else "audio"
+out_path = os.path.abspath(os.path.join(CLICK_OUTPUT_DIR, f"{base}.clicks.wav"))
+
+st.caption(f"Output path: `{out_path}`")
+
+if st.button("Generate metronome mix"):
+    with st.spinner("Mixing click track..."):
+        clicks = librosa.clicks(times=np.asarray(beat_times), sr=sr, length=len(y))
+        mixed = y + click_volume * clicks
+        peak = float(np.max(np.abs(mixed)))
+        if peak > 1.0:
+            mixed = mixed / peak
+        sf.write(out_path, mixed, sr, format="WAV")
+        st.session_state["mix_path"] = out_path
+        st.session_state["mix_key"] = gen_key
+
+if st.session_state.get("mix_key") == gen_key and st.session_state.get("mix_path") == out_path:
+    st.success(f"Wrote {out_path}")
+    st.audio(out_path)
