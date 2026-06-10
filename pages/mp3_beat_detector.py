@@ -31,7 +31,32 @@ if source == "Upload file":
         audio_bytes = uploaded.getvalue()
         filename = uploaded.name
 else:
-    local_path = st.text_input("Path to audio file", value=DEFAULT_LOCAL_PATH)
+    if "audio_path_input" not in st.session_state:
+        st.session_state["audio_path_input"] = DEFAULT_LOCAL_PATH
+
+    path_col, pick_col = st.columns([5, 1])
+    if pick_col.button("Pick file…"):
+        import subprocess
+
+        # macOS-native file picker via AppleScript — no Tk dependency
+        script = (
+            'POSIX path of (choose file with prompt "Choose audio file" '
+            'of type {"mp3", "wav", "m4a", "flac", "ogg"})'
+        )
+        result = subprocess.run(
+            ["osascript", "-e", script],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        if result.returncode == 0:
+            picked = result.stdout.strip()
+            if picked:
+                st.session_state["audio_path_input"] = picked
+                st.rerun()
+        # returncode != 0 typically means the user cancelled; ignore silently
+
+    local_path = path_col.text_input("Path to audio file", key="audio_path_input")
     if local_path:
         try:
             with open(local_path, "rb") as f:
