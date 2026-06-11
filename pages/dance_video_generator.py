@@ -19,10 +19,12 @@ import tempfile
 import librosa
 import numpy as np
 import pandas as pd
+import soundfile as sf
 import streamlit as st
 from PIL import Image, ImageDraw, ImageFont
 
 VIDEO_OUTPUT_DIR = "video_output/"
+CLICK_OUTPUT_DIR = "click_track_output/"
 DEFAULT_MP3_PATH = "/Users/tom.zielund/Music/Music/04 - Watermelon Crawl.mp3"
 DEFAULT_LABELS = (
     "beat,text,kind,duration_beats\n"
@@ -66,6 +68,10 @@ def _render_label_frame(text, kind):
         font = _load_font(120)
         color = (255, 100, 100, 255)
         anchor_y = VIDEO_SIZE[1] // 2 - 60
+    elif kind == "count":
+        font = _load_font(70)
+        color = (100, 200, 255, 255)
+        anchor_y = VIDEO_SIZE[1] // 2 + 60
     else:  # step
         font = _load_font(80)
         color = (255, 255, 255, 255)
@@ -78,9 +84,8 @@ def _render_label_frame(text, kind):
 
 
 @st.cache_data(show_spinner="Detecting beats…")
-def detect_beats(audio_path):
-    """Return (tempo, beat_times list). Cached per audio_path."""
-    # Load via temp copy so librosa doesn't have to deal with weird names
+def analyze_audio(audio_path):
+    """Load audio + detect beats. Cached per audio_path. Returns (y, sr, tempo, beat_times)."""
     with tempfile.NamedTemporaryFile(suffix=os.path.splitext(audio_path)[1] or ".mp3", delete=False) as tmp:
         with open(audio_path, "rb") as src:
             tmp.write(src.read())
@@ -92,7 +97,29 @@ def detect_beats(audio_path):
     tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr)
     beat_times = librosa.frames_to_time(beat_frames, sr=sr).tolist()
     tempo_val = float(tempo) if np.isscalar(tempo) else float(np.asarray(tempo).flatten()[0])
-    return tempo_val, beat_times
+    return y, sr, tempo_val, beat_times
+
+
+def detect_beats(audio_path):
+    """Backwards-compatible wrapper returning just (tempo, beat_times)."""
+    _, _, tempo, beat_times = analyze_audio(audio_path)
+    return tempo, beat_times
+
+
+@st.cache_data(show_spinner="Mixing click track…")
+def make_click_track(audio_path, click_volume):
+    """Generate a click-track-mixed WAV in CLICK_OUTPUT_DIR, return the path."""
+    y, sr, _, beat_times = analyze_audio(audio_path)
+    clicks = librosa.clicks(times=np.asarray(beat_times), sr=sr, length=len(y))
+    mixed = y + click_volume * clicks
+    peak = float(np.max(np.abs(mixed)))
+    if peak > 1.0:
+        mixed = mixed / peak
+    os.makedirs(CLICK_OUTPUT_DIR, exist_ok=True)
+    base = os.path.splitext(os.path.basename(audio_path))[0]
+    out_path = os.path.abspath(os.path.join(CLICK_OUTPUT_DIR, f"{base}.clicks.wav"))
+    sf.write(out_path, mixed, sr, format="WAV")
+    return out_path
 
 
 def resolve_beats(labels_df):
@@ -249,11 +276,25 @@ with st.expander("Beat-to-time reference (first 32)"):
         hide_index=True,
     )
 
+st.subheader("Audio preview")
+preview_mode = st.radio(
+    "Preview",
+    ["Original", "With click track", "None"],
+    horizontal=True,
+    index=0,
+)
+if preview_mode == "Original":
+    st.audio(audio_path)
+elif preview_mode == "With click track":
+    click_volume = st.slider("Click volume (relative to music)", 0.0, 2.0, 0.5, step=0.1)
+    clicks_path = make_click_track(audio_path, click_volume)
+    st.audio(clicks_path)
+
 st.subheader("Labels")
 st.markdown(
     "Columns: `beat` (1-indexed, fractional OK; `+N` = N beats past previous row's last "
-    "beat), `text`, `kind` (step / wall / restart), `duration_beats` (how many beats the "
-    "label stays on screen)."
+    "beat), `text`, `kind` (step / wall / restart / count), `duration_beats` (how many "
+    "beats the label stays on screen)."
 )
 labels_csv = st.text_area("Labels CSV", value=DEFAULT_LABELS, height=240)
 
