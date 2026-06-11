@@ -31,6 +31,7 @@ stepsheet_topn_cache/
 m4d_cache/
 click_track_output/
 abc_output/
+video_output/
 *_cache.json
 
 # Editor / OS
