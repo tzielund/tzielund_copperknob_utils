@@ -32,6 +32,7 @@ m4d_cache/
 click_track_output/
 abc_output/
 video_output/
+extracted_audio/
 *_cache.json
 
 # Editor / OS

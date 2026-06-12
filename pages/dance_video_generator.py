@@ -25,6 +25,8 @@ from PIL import Image, ImageDraw, ImageFont
 
 VIDEO_OUTPUT_DIR = "video_output/"
 CLICK_OUTPUT_DIR = "click_track_output/"
+EXTRACTED_AUDIO_DIR = "extracted_audio/"
+VIDEO_EXTS = (".mp4", ".mov", ".m4v", ".mkv", ".avi", ".webm")
 DEFAULT_MP3_PATH = "/Users/tom.zielund/Music/Music/04 - Watermelon Crawl.mp3"
 DEFAULT_LABELS = (
     "beat,text,kind,duration_beats\n"
@@ -82,6 +84,33 @@ def _render_label_frame(text, kind):
     x = (VIDEO_SIZE[0] - tw) // 2
     draw.text((x, anchor_y), text, font=font, fill=color)
     return np.array(img)
+
+
+def is_video_file(path):
+    return path.lower().endswith(VIDEO_EXTS)
+
+
+@st.cache_data(show_spinner="Extracting audio from video…")
+def extract_audio_from_video(video_path):
+    """Pull the audio track out of a video into a WAV file. Returns the WAV path."""
+    from moviepy import VideoFileClip
+
+    os.makedirs(EXTRACTED_AUDIO_DIR, exist_ok=True)
+    base = os.path.splitext(os.path.basename(video_path))[0]
+    out_path = os.path.abspath(os.path.join(EXTRACTED_AUDIO_DIR, f"{base}.wav"))
+    clip = VideoFileClip(video_path)
+    try:
+        clip.audio.write_audiofile(out_path, logger=None)
+    finally:
+        clip.close()
+    return out_path
+
+
+def audio_path_for(source_path):
+    """Return a path to an audio file usable by librosa. Extracts from video if needed."""
+    if is_video_file(source_path):
+        return extract_audio_from_video(source_path)
+    return source_path
 
 
 @st.cache_data(show_spinner="Detecting beats…")
@@ -192,17 +221,32 @@ def beat_to_time(beat, beat_times):
     return beat_times[i_lo] + frac * (beat_times[i_lo + 1] - beat_times[i_lo])
 
 
-def generate_video(audio_path, labels_df, out_path, beat_times, max_seconds=None):
+def generate_video(source_path, labels_df, out_path, beat_times, max_seconds=None):
     # moviepy 2.x: import from `moviepy`, not `moviepy.editor`; methods are with_*, subclipped
-    from moviepy import AudioFileClip, ColorClip, CompositeVideoClip, ImageClip
+    from moviepy import (
+        AudioFileClip,
+        ColorClip,
+        CompositeVideoClip,
+        ImageClip,
+        VideoFileClip,
+    )
 
-    audio = AudioFileClip(audio_path)
-    duration = audio.duration
-    if max_seconds:
-        duration = min(duration, max_seconds)
-        audio = audio.subclipped(0, duration)
+    if is_video_file(source_path):
+        src = VideoFileClip(source_path).resized(VIDEO_SIZE)
+        duration = src.duration
+        if max_seconds:
+            duration = min(duration, max_seconds)
+            src = src.subclipped(0, duration)
+        audio = src.audio
+        background = src.with_audio(None)  # avoid audio being applied twice when we re-attach
+    else:
+        audio = AudioFileClip(source_path)
+        duration = audio.duration
+        if max_seconds:
+            duration = min(duration, max_seconds)
+            audio = audio.subclipped(0, duration)
+        background = ColorClip(VIDEO_SIZE, color=(0, 0, 0), duration=duration)
 
-    background = ColorClip(VIDEO_SIZE, color=(0, 0, 0), duration=duration)
     overlays = [background]
 
     for _, row in labels_df.iterrows():
@@ -244,8 +288,8 @@ if "video_audio_path" not in st.session_state:
 path_col, pick_col = st.columns([5, 1])
 if pick_col.button("Pick file…"):
     script = (
-        'POSIX path of (choose file with prompt "Choose audio file" '
-        'of type {"mp3", "wav", "m4a", "flac"})'
+        'POSIX path of (choose file with prompt "Choose audio or video file" '
+        'of type {"mp3", "wav", "m4a", "flac", "mp4", "mov", "m4v", "mkv", "webm"})'
     )
     result = subprocess.run(
         ["osascript", "-e", script], capture_output=True, text=True, timeout=300
@@ -254,14 +298,17 @@ if pick_col.button("Pick file…"):
         st.session_state["video_audio_path"] = result.stdout.strip()
         st.rerun()
 
-audio_path = path_col.text_input("Audio file path", key="video_audio_path")
+source_path = path_col.text_input("Audio or video file path", key="video_audio_path")
 
-if not (audio_path and os.path.exists(audio_path)):
-    st.info("Choose an audio file to begin.")
+if not (source_path and os.path.exists(source_path)):
+    st.info("Choose an audio or video file to begin.")
     st.stop()
 
-st.caption(f"Source: `{audio_path}`")
+is_video = is_video_file(source_path)
+st.caption(f"Source: `{source_path}`  ·  type: {'video' if is_video else 'audio'}")
 
+# For video sources, extract audio once for librosa + previews
+audio_path = audio_path_for(source_path)
 tempo, beat_times = detect_beats(audio_path)
 c1, c2, c3 = st.columns(3)
 c1.metric("Tempo (BPM)", f"{tempo:.1f}")
@@ -318,7 +365,7 @@ preview_only = st.checkbox("Preview first N seconds only", value=True)
 preview_seconds = st.number_input("Preview seconds", min_value=5, max_value=600, value=30, step=5)
 
 os.makedirs(VIDEO_OUTPUT_DIR, exist_ok=True)
-base = os.path.splitext(os.path.basename(audio_path))[0]
+base = os.path.splitext(os.path.basename(source_path))[0]
 suffix = ".preview.mp4" if preview_only else ".mp4"
 out_path = os.path.abspath(os.path.join(VIDEO_OUTPUT_DIR, f"{base}{suffix}"))
 st.caption(f"Output path: `{out_path}`")
@@ -326,7 +373,7 @@ st.caption(f"Output path: `{out_path}`")
 if st.button("Generate video"):
     with st.spinner("Rendering — this can take a minute…"):
         generate_video(
-            audio_path,
+            source_path,
             labels_df,
             out_path,
             beat_times,
