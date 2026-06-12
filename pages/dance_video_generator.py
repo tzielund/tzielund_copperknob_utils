@@ -28,6 +28,7 @@ CLICK_OUTPUT_DIR = "click_track_output/"
 DEFAULT_MP3_PATH = "/Users/tom.zielund/Music/Music/04 - Watermelon Crawl.mp3"
 DEFAULT_LABELS = (
     "beat,text,kind,duration_beats\n"
+    "# Lines starting with # are ignored\n"
     "1,Intro,wall,32\n"
     "+1,Wall 1,wall,32\n"
     "33,Step 1,step,4\n"
@@ -294,12 +295,18 @@ st.subheader("Labels")
 st.markdown(
     "Columns: `beat` (1-indexed, fractional OK; `+N` = N beats past previous row's last "
     "beat), `text`, `kind` (step / wall / restart / count), `duration_beats` (how many "
-    "beats the label stays on screen)."
+    "beats the label stays on screen). Lines starting with `#` are treated as comments "
+    "and skipped."
 )
 labels_csv = st.text_area("Labels CSV", value=DEFAULT_LABELS, height=240)
 
 try:
-    labels_df = pd.read_csv(io.StringIO(labels_csv), dtype={"beat": str})
+    # Strip lines whose first non-whitespace character is '#'. Done by line so that '#'
+    # inside text cells (e.g. "Step #5") isn't treated as a comment marker.
+    filtered_csv = "\n".join(
+        line for line in labels_csv.splitlines() if not line.lstrip().startswith("#")
+    )
+    labels_df = pd.read_csv(io.StringIO(filtered_csv), dtype={"beat": str})
     labels_df = resolve_beats(labels_df)
 except Exception as e:
     st.error(f"Couldn't parse labels CSV: {e}")
