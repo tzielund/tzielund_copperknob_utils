@@ -63,25 +63,46 @@ def _render_label_frame(text, kind):
     """Return an RGBA numpy array sized to VIDEO_SIZE with the text composited in."""
     img = Image.new("RGBA", VIDEO_SIZE, (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
+    # Five label kinds. Layout convention: center is reserved for `title`; the corners
+    # carry persistent wall/restart markers; step + count stack near the bottom.
     if kind == "wall":
-        font = _load_font(110)
+        font = _load_font(70)
         color = (255, 200, 50, 255)
-        anchor_y = 130
+        h_align = "left"
+        anchor_y = 50
     elif kind == "restart":
-        font = _load_font(120)
+        font = _load_font(70)
         color = (255, 100, 100, 255)
-        anchor_y = VIDEO_SIZE[1] // 2 - 60
+        h_align = "right"
+        anchor_y = 50
+    elif kind == "title":
+        font = _load_font(110)
+        color = (255, 255, 255, 255)
+        h_align = "center"
+        anchor_y = None  # vertically centered after measuring
     elif kind == "count":
         font = _load_font(70)
         color = (100, 200, 255, 255)
-        anchor_y = VIDEO_SIZE[1] // 2 + 60
+        h_align = "center"
+        anchor_y = VIDEO_SIZE[1] - 110
     else:  # step
         font = _load_font(80)
         color = (255, 255, 255, 255)
-        anchor_y = VIDEO_SIZE[1] // 2 - 40
+        h_align = "center"
+        anchor_y = VIDEO_SIZE[1] - 210
+
     bbox = draw.textbbox((0, 0), text, font=font)
     tw = bbox[2] - bbox[0]
-    x = (VIDEO_SIZE[0] - tw) // 2
+    th = bbox[3] - bbox[1]
+    edge_padding = 50
+    if h_align == "left":
+        x = edge_padding
+    elif h_align == "right":
+        x = VIDEO_SIZE[0] - edge_padding - tw
+    else:
+        x = (VIDEO_SIZE[0] - tw) // 2
+    if anchor_y is None:
+        anchor_y = (VIDEO_SIZE[1] - th) // 2
     draw.text((x, anchor_y), text, font=font, fill=color)
     return np.array(img)
 
@@ -289,7 +310,7 @@ path_col, pick_col = st.columns([5, 1])
 if pick_col.button("Pick file…"):
     script = (
         'POSIX path of (choose file with prompt "Choose audio or video file" '
-        'of type {"mp3", "wav", "m4a", "flac", "mp4", "mov", "m4v", "mkv", "webm"})'
+        'of type {"public.audio", "public.movie", "public.mpeg-4", "mp3", "wav", "mp4"})'
     )
     result = subprocess.run(
         ["osascript", "-e", script], capture_output=True, text=True, timeout=300
@@ -341,9 +362,9 @@ elif preview_mode == "With click track":
 st.subheader("Labels")
 st.markdown(
     "Columns: `beat` (1-indexed, fractional OK; `+N` = N beats past previous row's last "
-    "beat), `text`, `kind` (step / wall / restart / count), `duration_beats` (how many "
-    "beats the label stays on screen). Lines starting with `#` are treated as comments "
-    "and skipped."
+    "beat), `text`, `kind` (step / wall / restart / count / title), `duration_beats` "
+    "(how many beats the label stays on screen). Lines starting with `#` are treated as "
+    "comments and skipped."
 )
 labels_csv = st.text_area("Labels CSV", value=DEFAULT_LABELS, height=240)
 
