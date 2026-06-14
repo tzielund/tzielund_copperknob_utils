@@ -157,6 +157,36 @@ def detect_beats(audio_path):
     return tempo, beat_times
 
 
+@st.cache_data(show_spinner="Muxing click track into video…")
+def make_video_with_clicks(source_path, click_volume):
+    """Build an MP4 with the original video stream and a click-mixed audio stream.
+
+    Uses ffmpeg stream-copy on the video so this is fast; only audio is re-encoded.
+    """
+    audio_path_local = audio_path_for(source_path)
+    clicks_audio_path = make_click_track(audio_path_local, click_volume)
+
+    os.makedirs(CLICK_OUTPUT_DIR, exist_ok=True)
+    base = os.path.splitext(os.path.basename(source_path))[0]
+    out_path = os.path.abspath(os.path.join(CLICK_OUTPUT_DIR, f"{base}.with_clicks.mp4"))
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", source_path,
+        "-i", clicks_audio_path,
+        "-map", "0:v",
+        "-map", "1:a",
+        "-c:v", "copy",
+        "-c:a", "aac",
+        "-shortest",
+        out_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"ffmpeg failed:\n{result.stderr}")
+    return out_path
+
+
 @st.cache_data(show_spinner="Mixing click track…")
 def make_click_track(audio_path, click_volume):
     """Generate a click-track-mixed WAV in CLICK_OUTPUT_DIR, return the path."""
@@ -345,19 +375,34 @@ with st.expander("Beat-to-time reference (first 32)"):
         hide_index=True,
     )
 
-st.subheader("Audio preview")
-preview_mode = st.radio(
-    "Preview",
-    ["Original", "With click track", "None"],
-    horizontal=True,
-    index=0,
-)
-if preview_mode == "Original":
-    st.audio(audio_path)
-elif preview_mode == "With click track":
+st.subheader("Preview")
+if is_video:
+    preview_options = [
+        "Audio - original",
+        "Audio - with clicks",
+        "Video - original",
+        "Video - with clicks",
+        "None",
+    ]
+else:
+    preview_options = ["Audio - original", "Audio - with clicks", "None"]
+preview_mode = st.radio("Preview", preview_options, horizontal=True, index=0)
+
+needs_clicks = preview_mode in ("Audio - with clicks", "Video - with clicks")
+if needs_clicks:
     click_volume = st.slider("Click volume (relative to music)", 0.0, 2.0, 0.5, step=0.1)
-    clicks_path = make_click_track(audio_path, click_volume)
-    st.audio(clicks_path)
+
+if preview_mode == "Audio - original":
+    st.audio(audio_path)
+elif preview_mode == "Audio - with clicks":
+    st.audio(make_click_track(audio_path, click_volume))
+elif preview_mode == "Video - original":
+    st.video(source_path)
+elif preview_mode == "Video - with clicks":
+    try:
+        st.video(make_video_with_clicks(source_path, click_volume))
+    except RuntimeError as e:
+        st.error(str(e))
 
 st.subheader("Labels")
 st.markdown(
