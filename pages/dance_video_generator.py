@@ -272,7 +272,7 @@ def beat_to_time(beat, beat_times):
     return beat_times[i_lo] + frac * (beat_times[i_lo + 1] - beat_times[i_lo])
 
 
-def generate_video(source_path, labels_df, out_path, beat_times, max_seconds=None):
+def generate_video(source_path, labels_df, out_path, beat_times, max_seconds=None, label_offset_beats=0.0):
     # moviepy 2.x: import from `moviepy`, not `moviepy.editor`; methods are with_*, subclipped
     from moviepy import (
         AudioFileClip,
@@ -282,6 +282,7 @@ def generate_video(source_path, labels_df, out_path, beat_times, max_seconds=Non
         VideoFileClip,
     )
 
+    output_fps = FPS
     if is_video_file(source_path):
         src = VideoFileClip(source_path).resized(VIDEO_SIZE)
         duration = src.duration
@@ -290,6 +291,8 @@ def generate_video(source_path, labels_df, out_path, beat_times, max_seconds=Non
             src = src.subclipped(0, duration)
         audio = src.audio
         background = src.with_audio(None)  # avoid audio being applied twice when we re-attach
+        if src.fps:
+            output_fps = src.fps  # match source fps to avoid re-encoding sync drift
     else:
         audio = AudioFileClip(source_path)
         duration = audio.duration
@@ -301,7 +304,7 @@ def generate_video(source_path, labels_df, out_path, beat_times, max_seconds=Non
     overlays = [background]
 
     for _, row in labels_df.iterrows():
-        beat = float(row["beat"])
+        beat = float(row["beat"]) + label_offset_beats
         t = beat_to_time(beat, beat_times)
         if t >= duration or t < 0:
             continue
@@ -322,7 +325,7 @@ def generate_video(source_path, labels_df, out_path, beat_times, max_seconds=Non
     video = CompositeVideoClip(overlays, size=VIDEO_SIZE).with_audio(audio)
     video.write_videofile(
         out_path,
-        fps=FPS,
+        fps=output_fps,
         codec="libx264",
         audio_codec="aac",
         preset="ultrafast",  # render fast; quality is fine for previews
@@ -429,6 +432,16 @@ st.dataframe(labels_df, hide_index=True)
 st.subheader("Render")
 preview_only = st.checkbox("Preview first N seconds only", value=True)
 preview_seconds = st.number_input("Preview seconds", min_value=5, max_value=600, value=30, step=5)
+label_offset_beats = st.number_input(
+    "Label offset (beats)",
+    value=0.0,
+    step=0.05,
+    format="%.2f",
+    help=(
+        "Added to every label's beat. Positive values shift labels later (use this if "
+        "labels appear earlier than they should). Try 0.25 if labels feel a quarter beat early."
+    ),
+)
 
 os.makedirs(VIDEO_OUTPUT_DIR, exist_ok=True)
 base = os.path.splitext(os.path.basename(source_path))[0]
@@ -444,6 +457,7 @@ if st.button("Generate video"):
             out_path,
             beat_times,
             max_seconds=preview_seconds if preview_only else None,
+            label_offset_beats=label_offset_beats,
         )
     st.session_state["video_out_path"] = out_path
 
