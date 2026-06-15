@@ -33,6 +33,7 @@ click_track_output/
 abc_output/
 video_output/
 extracted_audio/
+medley_output/
 *_cache.json
 
 # Editor / OS
