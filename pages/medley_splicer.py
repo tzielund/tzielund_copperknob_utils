@@ -61,6 +61,28 @@ def beat_to_sample(beat, beat_times, sr, total_samples):
 
 n_segments = st.number_input("Number of segments", min_value=2, max_value=8, value=2, step=1)
 crossfade_ms = st.slider("Crossfade between segments (ms)", 0, 500, 80, step=10)
+preview_clicks = st.checkbox("Add click track to previews (helps verify beat detection)", value=True)
+preview_click_volume = st.slider(
+    "Preview click volume", 0.0, 2.0, 0.5, step=0.1, disabled=not preview_clicks
+)
+
+
+def mix_clicks(slice_y, beat_times, slice_start_t, sr, click_volume):
+    """Return slice_y with clicks overlaid at any beat times falling inside the slice."""
+    slice_duration = len(slice_y) / sr
+    rel_times = [
+        bt - slice_start_t
+        for bt in beat_times
+        if 0.0 <= bt - slice_start_t < slice_duration
+    ]
+    if not rel_times:
+        return slice_y
+    clicks = librosa.clicks(times=np.asarray(rel_times), sr=sr, length=len(slice_y))
+    mixed = slice_y + click_volume * clicks
+    peak = float(np.max(np.abs(mixed)))
+    if peak > 1.0:
+        mixed = mixed / peak
+    return mixed
 
 segments = []
 for i in range(int(n_segments)):
@@ -91,38 +113,98 @@ for i in range(int(n_segments)):
         f"Duration: {duration:.1f}s  ·  BPM ≈ {tempo:.1f}  ·  Beats detected: {n_beats}"
     )
 
-    sb_col, eb_col = st.columns(2)
-    start_beat = sb_col.number_input(
-        "Start beat",
-        min_value=1,
-        max_value=n_beats,
-        value=1,
-        step=1,
-        key=f"start_{i}",
+    start_unit = st.radio(
+        "Start by", ["Beat", "Time (s)"], horizontal=True, key=f"start_unit_{i}"
     )
-    end_beat = eb_col.number_input(
-        "End beat",
-        min_value=int(start_beat),
-        max_value=n_beats,
-        value=n_beats,
-        step=1,
-        key=f"end_{i}",
-    )
+    sb_col, dur_col = st.columns(2)
+    if start_unit == "Beat":
+        start_beat = int(
+            sb_col.number_input(
+                "Start beat",
+                min_value=1,
+                max_value=n_beats,
+                value=1,
+                step=1,
+                key=f"start_beat_{i}",
+            )
+        )
+        seg_start_t = beat_times[start_beat - 1] if start_beat - 1 < n_beats else 0.0
+    else:
+        typed_time = float(
+            sb_col.number_input(
+                "Start (seconds)",
+                min_value=0.0,
+                max_value=float(duration),
+                value=0.0,
+                step=0.5,
+                format="%.2f",
+                key=f"start_time_{i}",
+            )
+        )
+        # Snap to the preceding beat (largest beat_time <= typed_time)
+        preceding_idx = -1
+        for k, t in enumerate(beat_times):
+            if t <= typed_time:
+                preceding_idx = k
+            else:
+                break
+        if preceding_idx >= 0:
+            start_beat = preceding_idx + 1
+            seg_start_t = beat_times[preceding_idx]
+        else:
+            start_beat = 1
+            seg_start_t = 0.0
 
-    seg_start_t = beat_times[start_beat - 1] if start_beat - 1 < n_beats else 0.0
-    seg_end_t = beat_times[end_beat - 1] if end_beat - 1 < n_beats else duration
-    st.caption(
-        f"Slice: beat {start_beat} ({seg_start_t:.2f}s) → beat {end_beat} ({seg_end_t:.2f}s), "
-        f"length {seg_end_t - seg_start_t:.2f}s"
+    # No max_value: changing start_beat would shrink the bound and clamp the user's typed
+    # value. Slice math handles overflow by clamping to the song's last sample.
+    duration_beats = int(
+        dur_col.number_input(
+            "Duration (beats)",
+            min_value=1,
+            value=32,
+            step=1,
+            key=f"duration_{i}",
+        )
     )
+    end_beat = start_beat + duration_beats  # exclusive; beat_to_sample clamps to total
+    beats_available = max(0, n_beats - start_beat + 1)
+    if duration_beats > beats_available:
+        st.caption(
+            f"⚠ Requested {duration_beats} beats but only ~{beats_available} remain "
+            "from this start — slice will end at the song's last sample."
+        )
+
+    seg_end_t = beat_times[end_beat - 1] if end_beat - 1 < n_beats else duration
+    if start_unit == "Beat":
+        st.caption(
+            f"Slice: beat {start_beat} ({seg_start_t:.2f}s) for {duration_beats} beats "
+            f"→ {seg_end_t:.2f}s, {seg_end_t - seg_start_t:.2f}s of audio"
+        )
+    else:
+        st.caption(
+            f"Slice: {typed_time:.2f}s snapped to beat {start_beat} ({seg_start_t:.2f}s) "
+            f"for {duration_beats} beats → {seg_end_t:.2f}s, "
+            f"{seg_end_t - seg_start_t:.2f}s of audio"
+        )
+
+    # Both modes snap the start to a beat boundary (Time mode rounds down to the preceding beat).
+    slice_start_idx = max(0, min(int(seg_start_t * sr), len(y)))
+    slice_end_idx = beat_to_sample(end_beat, beat_times, sr, len(y))
+    if slice_end_idx > slice_start_idx:
+        slice_y = y[slice_start_idx:slice_end_idx]
+        if preview_clicks:
+            slice_y = mix_clicks(slice_y, beat_times, slice_start_idx / sr, sr, preview_click_volume)
+        st.audio(slice_y, sample_rate=sr)
+    else:
+        st.warning("Empty slice — adjust start/end beats.")
 
     segments.append({
         "path": path,
         "y": y,
         "sr": sr,
         "beat_times": beat_times,
-        "start_beat": int(start_beat),
-        "end_beat": int(end_beat),
+        "start_idx": slice_start_idx,
+        "end_idx": slice_end_idx,
     })
 
 
@@ -143,10 +225,8 @@ if st.button("Stitch medley"):
 
     pieces = []
     for s in segments:
-        start_idx = beat_to_sample(s["start_beat"], s["beat_times"], s["sr"], len(s["y"]))
-        end_idx = beat_to_sample(s["end_beat"], s["beat_times"], s["sr"], len(s["y"]))
-        if end_idx > start_idx:
-            pieces.append(s["y"][start_idx:end_idx])
+        if s["end_idx"] > s["start_idx"]:
+            pieces.append(s["y"][s["start_idx"]:s["end_idx"]])
 
     if not pieces:
         st.error("All segments resolved to empty slices.")
