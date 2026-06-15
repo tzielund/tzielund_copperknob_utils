@@ -10,6 +10,7 @@ from collections import Counter
 import requests
 import streamlit as st
 
+import google_sheet_util
 from google_sheet_util import read_google_sheet, read_google_sheet_as_worksheet
 
 M4D_CACHE_DIR = "m4d_cache/"
@@ -28,8 +29,8 @@ st.title("Music4Dance Style Miner")
 
 
 @st.cache_data(ttl=600)
-def load_sheet():
-    df = read_google_sheet()
+def load_sheet(spreadsheet_url, sheet_name):
+    df = read_google_sheet(spreadsheet_url, sheet_name)
     rows = []
     for i in range(len(df)):
         r = df.iloc[i]
@@ -95,11 +96,13 @@ def save_to_sheet(sheet_row, top_style, styles_list):
     ws.update_cell(sheet_row, COL_M4D_STYLES + 1, styles_list)
 
 
+active_url, active_sheet_name = google_sheet_util.render_sheet_selector_sidebar()
+
 if st.sidebar.button("Refresh sheet data"):
     load_sheet.clear()
     st.rerun()
 
-rows = load_sheet()
+rows = load_sheet(active_url, active_sheet_name)
 linked_rows = [r for r in rows if r["m4d_url"].startswith("http")]
 st.caption(f"{len(linked_rows)} of {len(rows)} rows have a Music4Dance link")
 

@@ -5,19 +5,22 @@ import requests
 # Read data from exported favourites file
 import streamlit
 
+import google_sheet_util
 from google_sheet_util import read_google_sheet, add_dance_to_sheet, update_copperknob_url_at
 from local_fav_utils import read_local_favourites, local_favourites_file_in_project
 from stepsheet_util import Stepsheet
 
 local_favourites = read_local_favourites(local_favourites_file_in_project)
 
+active_url, active_sheet_name = google_sheet_util.render_sheet_selector_sidebar()
+
 
 @streamlit.cache_data(ttl=600)
-def _cached_google_sheet():
-    return read_google_sheet()
+def _cached_google_sheet(spreadsheet_url, sheet_name):
+    return read_google_sheet(spreadsheet_url, sheet_name)
 
 
-google_sheet = _cached_google_sheet()
+google_sheet = _cached_google_sheet(active_url, active_sheet_name)
 
 if streamlit.button("Refresh google sheet"):
     _cached_google_sheet.clear()

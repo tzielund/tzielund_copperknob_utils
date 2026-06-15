@@ -6,6 +6,7 @@ from collections import Counter
 import pandas as pd
 import streamlit as st
 
+import google_sheet_util
 from google_sheet_util import read_google_sheet, read_google_sheet_as_worksheet
 
 PATTERN_CSV_PATH = "m4d_pattern_dances.csv"
@@ -28,8 +29,8 @@ def _norm(s):
 
 
 @st.cache_data(ttl=600)
-def load_sheet():
-    df = read_google_sheet()
+def load_sheet(spreadsheet_url, sheet_name):
+    df = read_google_sheet(spreadsheet_url, sheet_name)
     out = []
     for i in range(len(df)):
         r = df.iloc[i]
@@ -113,11 +114,13 @@ def write_cells(sheet_row, **updates):
         ws.update_cell(sheet_row, col_map[key], value)
 
 
+active_url, active_sheet_name = google_sheet_util.render_sheet_selector_sidebar()
+
 if st.sidebar.button("Refresh sheet data"):
     load_sheet.clear()
     st.rerun()
 
-sheet_rows = load_sheet()
+sheet_rows = load_sheet(active_url, active_sheet_name)
 songs = load_pattern_csv()
 by_spotify, by_title_artist = build_indexes(songs)
 

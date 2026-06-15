@@ -4,6 +4,7 @@ import streamlit as st
 
 import spotify_streamlit_util
 import spotify_util
+import google_sheet_util
 from google_sheet_util import read_google_sheet, read_google_sheet_as_worksheet
 
 st.set_page_config(page_title="Spotify Cacher", layout="wide")
@@ -45,8 +46,8 @@ def save_spotify_url(sheet_row, url):
 
 
 @st.cache_data(ttl=120)
-def load_sheet():
-    df = read_google_sheet()
+def load_sheet(spreadsheet_url, sheet_name):
+    df = read_google_sheet(spreadsheet_url, sheet_name)
     rows = []
     for i in range(len(df)):
         row = df.iloc[i]
@@ -62,6 +63,8 @@ def load_sheet():
     return rows
 
 
+active_url, active_sheet_name = google_sheet_util.render_sheet_selector_sidebar()
+
 if st.sidebar.button("Refresh sheet data"):
     load_sheet.clear()
     st.rerun()
@@ -73,7 +76,7 @@ def load_playlist(playlist_id, ignore_cache):
 
 
 # ── Sheet data ────────────────────────────────────────────────────────────────
-rows = load_sheet()
+rows = load_sheet(active_url, active_sheet_name)
 linked = [r for r in rows if r["linked"]]
 unlinked = [r for r in rows if not r["linked"]]
 
