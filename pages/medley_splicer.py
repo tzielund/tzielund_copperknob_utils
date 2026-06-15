@@ -10,6 +10,7 @@ Prereqs:
 """
 
 import io
+import json
 import os
 import subprocess
 
@@ -59,11 +60,48 @@ def beat_to_sample(beat, beat_times, sr, total_samples):
     return min(int(beat_times[idx] * sr), total_samples)
 
 
-n_segments = st.number_input("Number of segments", min_value=2, max_value=8, value=2, step=1)
-crossfade_ms = st.slider("Crossfade between segments (ms)", 0, 500, 80, step=10)
-preview_clicks = st.checkbox("Add click track to previews (helps verify beat detection)", value=True)
+if st.button("Load cut points…"):
+    script = (
+        'POSIX path of (choose file with prompt "Choose cut points JSON" '
+        'of type {"json"})'
+    )
+    result = subprocess.run(
+        ["osascript", "-e", script], capture_output=True, text=True, timeout=300
+    )
+    if result.returncode == 0 and result.stdout.strip():
+        cuts_path = result.stdout.strip()
+        try:
+            with open(cuts_path) as f:
+                cuts_data = json.load(f)
+            st.session_state["n_segments"] = int(len(cuts_data["segments"]))
+            st.session_state["crossfade_ms"] = int(cuts_data.get("crossfade_ms", 80))
+            st.session_state["preview_clicks"] = bool(cuts_data.get("preview_clicks", True))
+            st.session_state["preview_click_volume"] = float(cuts_data.get("preview_click_volume", 0.5))
+            for i, seg in enumerate(cuts_data["segments"]):
+                st.session_state[f"medley_path_{i}"] = seg["path"]
+                st.session_state[f"start_unit_{i}"] = seg.get("start_unit", "Beat")
+                if "start_beat" in seg:
+                    st.session_state[f"start_beat_{i}"] = int(seg["start_beat"])
+                if "start_time" in seg:
+                    st.session_state[f"start_time_{i}"] = float(seg["start_time"])
+                st.session_state[f"duration_{i}"] = int(seg.get("duration_beats", 32))
+            st.success(f"Loaded {cuts_path}")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Couldn't load cut points: {e}")
+
+n_segments = st.number_input(
+    "Number of segments", min_value=2, max_value=8, value=2, step=1, key="n_segments"
+)
+crossfade_ms = st.slider(
+    "Crossfade between segments (ms)", 0, 500, 80, step=10, key="crossfade_ms"
+)
+preview_clicks = st.checkbox(
+    "Add click track to previews (helps verify beat detection)", value=True, key="preview_clicks"
+)
 preview_click_volume = st.slider(
-    "Preview click volume", 0.0, 2.0, 0.5, step=0.1, disabled=not preview_clicks
+    "Preview click volume", 0.0, 2.0, 0.5, step=0.1,
+    disabled=not preview_clicks, key="preview_click_volume",
 )
 
 
@@ -213,13 +251,39 @@ if len(segments) < 2:
     st.info("Configure at least two segments to stitch.")
     st.stop()
 
-# Output path is derived from the first segment's filename
+# Output paths derived from the first segment's filename
 os.makedirs(MEDLEY_OUTPUT_DIR, exist_ok=True)
 first_base = os.path.splitext(os.path.basename(segments[0]["path"]))[0]
 out_path = os.path.abspath(os.path.join(MEDLEY_OUTPUT_DIR, f"{first_base}.medley.wav"))
+cuts_path = os.path.abspath(os.path.join(MEDLEY_OUTPUT_DIR, f"{first_base}.cuts.json"))
 st.caption(f"Output path: `{out_path}`")
+st.caption(f"Cut-points path: `{cuts_path}`")
 
-if st.button("Stitch medley"):
+save_col, stitch_col = st.columns(2)
+if save_col.button("Save cut points"):
+    cuts_data = {
+        "crossfade_ms": int(crossfade_ms),
+        "preview_clicks": bool(preview_clicks),
+        "preview_click_volume": float(preview_click_volume),
+        "segments": [],
+    }
+    for i, seg in enumerate(segments):
+        unit = st.session_state.get(f"start_unit_{i}", "Beat")
+        seg_record = {
+            "path": seg["path"],
+            "start_unit": unit,
+            "duration_beats": int(st.session_state.get(f"duration_{i}", 32)),
+        }
+        if unit == "Beat":
+            seg_record["start_beat"] = int(st.session_state.get(f"start_beat_{i}", 1))
+        else:
+            seg_record["start_time"] = float(st.session_state.get(f"start_time_{i}", 0.0))
+        cuts_data["segments"].append(seg_record)
+    with open(cuts_path, "w") as f:
+        json.dump(cuts_data, f, indent=2)
+    st.success(f"Saved {cuts_path}")
+
+if stitch_col.button("Stitch medley"):
     sr = segments[0]["sr"]  # all loaded at TARGET_SR, so this matches
     crossfade_samples = int(crossfade_ms / 1000 * sr)
 
