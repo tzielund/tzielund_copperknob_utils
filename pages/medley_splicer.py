@@ -21,6 +21,7 @@ import streamlit as st
 
 MEDLEY_OUTPUT_DIR = "medley_output/"
 TARGET_SR = 44100
+TRANSITION_STYLES = ["Linear", "Equal-power", "S-curve", "Hard cut", "Long fade with silence"]
 
 st.set_page_config(page_title="Medley Splicer", layout="wide")
 st.title("Medley Splicer")
@@ -60,49 +61,152 @@ def beat_to_sample(beat, beat_times, sr, total_samples):
     return min(int(beat_times[idx] * sr), total_samples)
 
 
-if st.button("Load cut points…"):
+def _apply_cuts_data(cuts_data, source_label):
+    """Write a parsed cuts dict into session_state."""
+    segs = cuts_data.get("segments", [])
+    st.session_state["n_segments"] = int(len(segs)) if segs else 2
+    st.session_state["crossfade_ms"] = int(cuts_data.get("crossfade_ms", 80))
+    loaded_style = cuts_data.get("transition_style", "Linear")
+    if loaded_style in TRANSITION_STYLES:
+        st.session_state["transition_style"] = loaded_style
+    st.session_state["preview_clicks"] = bool(cuts_data.get("preview_clicks", True))
+    st.session_state["preview_click_volume"] = float(cuts_data.get("preview_click_volume", 0.5))
+    for i, seg in enumerate(segs):
+        st.session_state[f"medley_path_{i}"] = seg.get("path", "")
+        st.session_state[f"start_unit_{i}"] = seg.get("start_unit", "Beat")
+        if "start_beat" in seg:
+            st.session_state[f"start_beat_{i}"] = int(seg["start_beat"])
+        if "start_time" in seg:
+            st.session_state[f"start_time_{i}"] = float(seg["start_time"])
+        st.session_state[f"duration_{i}"] = int(seg.get("duration_beats", 32))
+    st.session_state["_load_success"] = f"Loaded {source_label} ({len(segs)} segments)"
+
+
+def _load_cuts_from_path(cuts_path):
+    try:
+        with open(cuts_path) as f:
+            cuts_data = json.load(f)
+    except Exception as e:
+        st.session_state["_load_error"] = f"Couldn't read cut-points file: {e}"
+        return
+    _apply_cuts_data(cuts_data, cuts_path)
+
+
+def _do_load_cuts():
+    """Run the file picker, parse the chosen JSON, and apply it into session_state.
+
+    Uses Streamlit's on_click callback timing so session_state updates are guaranteed
+    to be picked up by widgets on the next rerun (which Streamlit performs automatically
+    after the callback returns).
+    """
     script = (
         'POSIX path of (choose file with prompt "Choose cut points JSON" '
-        'of type {"json"})'
+        'of type {"public.json", "public.text", "json"})'
     )
     result = subprocess.run(
         ["osascript", "-e", script], capture_output=True, text=True, timeout=300
     )
-    if result.returncode == 0 and result.stdout.strip():
-        cuts_path = result.stdout.strip()
-        try:
-            with open(cuts_path) as f:
-                cuts_data = json.load(f)
-            st.session_state["n_segments"] = int(len(cuts_data["segments"]))
-            st.session_state["crossfade_ms"] = int(cuts_data.get("crossfade_ms", 80))
-            st.session_state["preview_clicks"] = bool(cuts_data.get("preview_clicks", True))
-            st.session_state["preview_click_volume"] = float(cuts_data.get("preview_click_volume", 0.5))
-            for i, seg in enumerate(cuts_data["segments"]):
-                st.session_state[f"medley_path_{i}"] = seg["path"]
-                st.session_state[f"start_unit_{i}"] = seg.get("start_unit", "Beat")
-                if "start_beat" in seg:
-                    st.session_state[f"start_beat_{i}"] = int(seg["start_beat"])
-                if "start_time" in seg:
-                    st.session_state[f"start_time_{i}"] = float(seg["start_time"])
-                st.session_state[f"duration_{i}"] = int(seg.get("duration_beats", 32))
-            st.success(f"Loaded {cuts_path}")
-            st.rerun()
-        except Exception as e:
-            st.error(f"Couldn't load cut points: {e}")
+    if result.returncode != 0 or not result.stdout.strip():
+        return
+    _load_cuts_from_path(result.stdout.strip())
+
+
+def _do_load_selected():
+    name = st.session_state.get("cuts_dropdown")
+    if name and name != "—":
+        _load_cuts_from_path(os.path.join(MEDLEY_OUTPUT_DIR, name))
+
+
+# Find cuts files in the canonical output dir for the dropdown
+os.makedirs(MEDLEY_OUTPUT_DIR, exist_ok=True)
+existing_cuts = sorted(
+    f for f in os.listdir(MEDLEY_OUTPUT_DIR) if f.endswith(".cuts.json")
+)
+
+dd_col, dd_btn_col, pick_col = st.columns([4, 1, 2])
+dd_col.selectbox(
+    "Load saved cuts",
+    ["—"] + existing_cuts,
+    key="cuts_dropdown",
+    label_visibility="collapsed",
+)
+dd_btn_col.button("Load", on_click=_do_load_selected, disabled=not existing_cuts)
+pick_col.button("Pick another file…", on_click=_do_load_cuts)
+
+if msg := st.session_state.pop("_load_success", None):
+    st.success(msg)
+if err := st.session_state.pop("_load_error", None):
+    st.error(err)
+
+# Defaults via session_state so Load can override them. Specifying `value=` on a
+# widget AND modifying its session_state from elsewhere is a conflict Streamlit
+# resolves by ignoring the session_state assignment — so we avoid `value=` on
+# anything we want to load into.
+for _k, _default in [
+    ("n_segments", 2),
+    ("crossfade_ms", 80),
+    ("transition_style", "Linear"),
+    ("preview_clicks", True),
+    ("preview_click_volume", 0.5),
+]:
+    if _k not in st.session_state:
+        st.session_state[_k] = _default
 
 n_segments = st.number_input(
-    "Number of segments", min_value=2, max_value=8, value=2, step=1, key="n_segments"
+    "Number of segments", min_value=2, max_value=8, step=1, key="n_segments"
 )
+transition_style = st.selectbox("Transition style", TRANSITION_STYLES, key="transition_style")
 crossfade_ms = st.slider(
-    "Crossfade between segments (ms)", 0, 500, 80, step=10, key="crossfade_ms"
+    "Crossfade between segments (ms)", 0, 500, step=10, key="crossfade_ms"
 )
 preview_clicks = st.checkbox(
-    "Add click track to previews (helps verify beat detection)", value=True, key="preview_clicks"
+    "Add click track to previews (helps verify beat detection)", key="preview_clicks"
 )
 preview_click_volume = st.slider(
-    "Preview click volume", 0.0, 2.0, 0.5, step=0.1,
+    "Preview click volume", 0.0, 2.0, step=0.1,
     disabled=not preview_clicks, key="preview_click_volume",
 )
+
+
+def crossfade_pieces(a, b, style, crossfade_samples):
+    """Join two audio arrays with the chosen transition style.
+
+    - Linear / Equal-power / S-curve: tail of `a` and head of `b` overlap with
+      curves designed for different perceived loudness behaviour.
+    - Hard cut: no overlap.
+    - Long fade with silence: tail fades fully out, a gap of crossfade_samples
+      of silence, then head fades fully in.
+    """
+    if style == "Hard cut" or crossfade_samples <= 0:
+        return np.concatenate([a, b])
+    if style == "Long fade with silence":
+        if len(a) < crossfade_samples or len(b) < crossfade_samples:
+            return np.concatenate([a, b])
+        fade_out = np.linspace(1.0, 0.0, crossfade_samples)
+        fade_in = np.linspace(0.0, 1.0, crossfade_samples)
+        silence = np.zeros(crossfade_samples, dtype=a.dtype)
+        return np.concatenate([
+            a[:-crossfade_samples],
+            a[-crossfade_samples:] * fade_out,
+            silence,
+            b[:crossfade_samples] * fade_in,
+            b[crossfade_samples:],
+        ])
+    if len(a) <= crossfade_samples or len(b) <= crossfade_samples:
+        return np.concatenate([a, b])
+    if style == "Equal-power":
+        angles = np.linspace(0.0, np.pi / 2, crossfade_samples)
+        fade_out = np.cos(angles)
+        fade_in = np.sin(angles)
+    elif style == "S-curve":
+        t = np.linspace(0.0, 1.0, crossfade_samples)
+        fade_in = 3 * t * t - 2 * t * t * t
+        fade_out = 1.0 - fade_in
+    else:  # Linear
+        fade_out = np.linspace(1.0, 0.0, crossfade_samples)
+        fade_in = np.linspace(0.0, 1.0, crossfade_samples)
+    overlap = a[-crossfade_samples:] * fade_out + b[:crossfade_samples] * fade_in
+    return np.concatenate([a[:-crossfade_samples], overlap, b[crossfade_samples:]])
 
 
 def mix_clicks(slice_y, beat_times, slice_start_t, sr, click_volume):
@@ -151,6 +255,17 @@ for i in range(int(n_segments)):
         f"Duration: {duration:.1f}s  ·  BPM ≈ {tempo:.1f}  ·  Beats detected: {n_beats}"
     )
 
+    # Per-segment widget defaults via session_state so Load can set them without
+    # conflicting with widget `value=` parameters.
+    for _k, _default in [
+        (f"start_unit_{i}", "Beat"),
+        (f"start_beat_{i}", 1),
+        (f"start_time_{i}", 0.0),
+        (f"duration_{i}", 32),
+    ]:
+        if _k not in st.session_state:
+            st.session_state[_k] = _default
+
     start_unit = st.radio(
         "Start by", ["Beat", "Time (s)"], horizontal=True, key=f"start_unit_{i}"
     )
@@ -161,7 +276,6 @@ for i in range(int(n_segments)):
                 "Start beat",
                 min_value=1,
                 max_value=n_beats,
-                value=1,
                 step=1,
                 key=f"start_beat_{i}",
             )
@@ -173,7 +287,6 @@ for i in range(int(n_segments)):
                 "Start (seconds)",
                 min_value=0.0,
                 max_value=float(duration),
-                value=0.0,
                 step=0.5,
                 format="%.2f",
                 key=f"start_time_{i}",
@@ -199,7 +312,6 @@ for i in range(int(n_segments)):
         dur_col.number_input(
             "Duration (beats)",
             min_value=1,
-            value=32,
             step=1,
             key=f"duration_{i}",
         )
@@ -243,8 +355,37 @@ for i in range(int(n_segments)):
         "beat_times": beat_times,
         "start_idx": slice_start_idx,
         "end_idx": slice_end_idx,
+        "start_beat": start_beat,
+        "end_beat": end_beat,
     })
 
+
+if len(segments) >= 2:
+    st.subheader("Transition previews")
+    transition_beats = 16
+    sr = segments[0]["sr"]
+    crossfade_samples = int(crossfade_ms / 1000 * sr)
+    for k in range(len(segments) - 1):
+        a = segments[k]
+        b = segments[k + 1]
+        # Last transition_beats of segment a's slice (clamped to its actual start)
+        tail_start_beat = max(a["start_beat"], a["end_beat"] - transition_beats)
+        tail_start_idx = beat_to_sample(tail_start_beat, a["beat_times"], a["sr"], len(a["y"]))
+        tail = a["y"][tail_start_idx:a["end_idx"]]
+        # First transition_beats of segment b's slice (clamped to its actual end)
+        head_end_beat = min(b["end_beat"], b["start_beat"] + transition_beats)
+        head_end_idx = beat_to_sample(head_end_beat, b["beat_times"], b["sr"], len(b["y"]))
+        head = b["y"][b["start_idx"]:head_end_idx]
+        if len(tail) == 0 or len(head) == 0:
+            st.caption(f"Transition {k + 1}: empty slice, nothing to preview")
+            continue
+        snippet = crossfade_pieces(tail, head, transition_style, crossfade_samples)
+        st.caption(
+            f"Transition {k + 1}: end of `{os.path.basename(a['path'])}` "
+            f"→ start of `{os.path.basename(b['path'])}` "
+            f"({len(tail) / sr:.2f}s + {len(head) / sr:.2f}s)"
+        )
+        st.audio(snippet, sample_rate=sr)
 
 st.subheader("Stitch")
 if len(segments) < 2:
@@ -263,6 +404,7 @@ save_col, stitch_col = st.columns(2)
 if save_col.button("Save cut points"):
     cuts_data = {
         "crossfade_ms": int(crossfade_ms),
+        "transition_style": transition_style,
         "preview_clicks": bool(preview_clicks),
         "preview_click_volume": float(preview_click_volume),
         "segments": [],
@@ -298,13 +440,7 @@ if stitch_col.button("Stitch medley"):
 
     output = pieces[0]
     for nxt in pieces[1:]:
-        if crossfade_samples > 0 and len(output) > crossfade_samples and len(nxt) > crossfade_samples:
-            fade_out = np.linspace(1.0, 0.0, crossfade_samples)
-            fade_in = np.linspace(0.0, 1.0, crossfade_samples)
-            overlap = output[-crossfade_samples:] * fade_out + nxt[:crossfade_samples] * fade_in
-            output = np.concatenate([output[:-crossfade_samples], overlap, nxt[crossfade_samples:]])
-        else:
-            output = np.concatenate([output, nxt])
+        output = crossfade_pieces(output, nxt, transition_style, crossfade_samples)
 
     peak = float(np.max(np.abs(output)))
     if peak > 1.0:
