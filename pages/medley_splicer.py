@@ -9,10 +9,19 @@ Prereqs:
     brew install ffmpeg
 """
 
+import http.server
 import io
 import json
 import os
+import socket
+import socketserver
 import subprocess
+import tempfile
+import threading
+import urllib.parse
+from io import BytesIO
+
+import qrcode
 
 import librosa
 import numpy as np
@@ -22,6 +31,47 @@ import streamlit as st
 MEDLEY_OUTPUT_DIR = "medley_output/"
 TARGET_SR = 44100
 TRANSITION_STYLES = ["Linear", "Equal-power", "S-curve", "Hard cut", "Long fade with silence"]
+SHARE_PORT = 8765
+
+
+def _get_local_ip():
+    """Return the Mac's LAN IP (the interface that would reach the internet)."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))  # No packets sent — just forces interface selection
+        return s.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+    finally:
+        s.close()
+
+
+@st.cache_resource(show_spinner=False)
+def _ensure_share_server():
+    """Start a background HTTP server serving MEDLEY_OUTPUT_DIR. Cached so it runs once."""
+    abs_dir = os.path.abspath(MEDLEY_OUTPUT_DIR)
+    os.makedirs(abs_dir, exist_ok=True)
+
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, directory=abs_dir, **kwargs)
+        def log_message(self, *a, **k):
+            pass  # silence stderr
+
+    server = socketserver.ThreadingTCPServer(("0.0.0.0", SHARE_PORT), Handler)
+    server.daemon_threads = True
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+def _make_qr_png(url):
+    qr = qrcode.QRCode(box_size=10, border=2)
+    qr.add_data(url)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
 
 st.set_page_config(page_title="Medley Splicer", layout="wide")
 st.title("Medley Splicer")
@@ -69,6 +119,9 @@ def _apply_cuts_data(cuts_data, source_label):
     loaded_style = cuts_data.get("transition_style", "Linear")
     if loaded_style in TRANSITION_STYLES:
         st.session_state["transition_style"] = loaded_style
+    loaded_fmt = cuts_data.get("output_format", "MP3")
+    if loaded_fmt in ("MP3", "WAV"):
+        st.session_state["output_format"] = loaded_fmt
     st.session_state["preview_clicks"] = bool(cuts_data.get("preview_clicks", True))
     st.session_state["preview_click_volume"] = float(cuts_data.get("preview_click_volume", 0.5))
     for i, seg in enumerate(segs):
@@ -146,6 +199,7 @@ for _k, _default in [
     ("n_segments", 2),
     ("crossfade_ms", 80),
     ("transition_style", "Linear"),
+    ("output_format", "MP3"),
     ("preview_clicks", True),
     ("preview_click_volume", 0.5),
 ]:
@@ -156,6 +210,9 @@ n_segments = st.number_input(
     "Number of segments", min_value=2, max_value=8, step=1, key="n_segments"
 )
 transition_style = st.selectbox("Transition style", TRANSITION_STYLES, key="transition_style")
+output_format = st.radio(
+    "Output format", ["MP3", "WAV"], horizontal=True, key="output_format"
+)
 crossfade_ms = st.slider(
     "Crossfade between segments (ms)", 0, 500, step=10, key="crossfade_ms"
 )
@@ -395,7 +452,8 @@ if len(segments) < 2:
 # Output paths derived from the first segment's filename
 os.makedirs(MEDLEY_OUTPUT_DIR, exist_ok=True)
 first_base = os.path.splitext(os.path.basename(segments[0]["path"]))[0]
-out_path = os.path.abspath(os.path.join(MEDLEY_OUTPUT_DIR, f"{first_base}.medley.wav"))
+out_ext = "mp3" if output_format == "MP3" else "wav"
+out_path = os.path.abspath(os.path.join(MEDLEY_OUTPUT_DIR, f"{first_base}.medley.{out_ext}"))
 cuts_path = os.path.abspath(os.path.join(MEDLEY_OUTPUT_DIR, f"{first_base}.cuts.json"))
 st.caption(f"Output path: `{out_path}`")
 st.caption(f"Cut-points path: `{cuts_path}`")
@@ -405,6 +463,7 @@ if save_col.button("Save cut points"):
     cuts_data = {
         "crossfade_ms": int(crossfade_ms),
         "transition_style": transition_style,
+        "output_format": output_format,
         "preview_clicks": bool(preview_clicks),
         "preview_click_volume": float(preview_click_volume),
         "segments": [],
@@ -446,10 +505,45 @@ if stitch_col.button("Stitch medley"):
     if peak > 1.0:
         output = output / peak
 
-    sf.write(out_path, output, sr, format="WAV")
+    if output_format == "WAV":
+        sf.write(out_path, output, sr, format="WAV")
+    else:
+        # Encode to MP3 via ffmpeg: WAV is a smaller-than-network detour through a tempfile
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            tmp_wav_path = tmp.name
+        try:
+            sf.write(tmp_wav_path, output, sr, format="WAV")
+            result = subprocess.run(
+                [
+                    "ffmpeg", "-y", "-i", tmp_wav_path,
+                    "-codec:a", "libmp3lame", "-b:a", "192k",
+                    out_path,
+                ],
+                capture_output=True, text=True,
+            )
+            if result.returncode != 0:
+                st.error(f"MP3 encoding failed:\n{result.stderr[:500]}")
+                st.stop()
+        finally:
+            try:
+                os.unlink(tmp_wav_path)
+            except OSError:
+                pass
     st.session_state["medley_out_path"] = out_path
     st.success(f"Wrote {out_path} ({len(output) / sr:.1f}s)")
 
 medley_path = st.session_state.get("medley_out_path")
 if medley_path and os.path.exists(medley_path):
     st.audio(medley_path)
+
+    if st.button("Share to phone (QR)"):
+        _ensure_share_server()  # idempotent; cache_resource keeps it alive
+        url = (
+            f"http://{_get_local_ip()}:{SHARE_PORT}/"
+            f"{urllib.parse.quote(os.path.basename(medley_path))}"
+        )
+        st.image(_make_qr_png(url), caption=f"Scan with your phone — {url}", width=300)
+        st.caption(
+            "Phone must be on the same Wi-Fi network. macOS firewall may prompt the first "
+            "time the server starts."
+        )
