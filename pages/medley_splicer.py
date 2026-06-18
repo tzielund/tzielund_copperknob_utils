@@ -419,18 +419,19 @@ for i in range(int(n_segments)):
 
 if len(segments) >= 2:
     st.subheader("Transition previews")
-    transition_beats = 16
+    transition_beats_before = 32
+    transition_beats_after = 16
     sr = segments[0]["sr"]
     crossfade_samples = int(crossfade_ms / 1000 * sr)
     for k in range(len(segments) - 1):
         a = segments[k]
         b = segments[k + 1]
-        # Last transition_beats of segment a's slice (clamped to its actual start)
-        tail_start_beat = max(a["start_beat"], a["end_beat"] - transition_beats)
+        # Last transition_beats_before of segment a's slice (clamped to its actual start)
+        tail_start_beat = max(a["start_beat"], a["end_beat"] - transition_beats_before)
         tail_start_idx = beat_to_sample(tail_start_beat, a["beat_times"], a["sr"], len(a["y"]))
         tail = a["y"][tail_start_idx:a["end_idx"]]
-        # First transition_beats of segment b's slice (clamped to its actual end)
-        head_end_beat = min(b["end_beat"], b["start_beat"] + transition_beats)
+        # First transition_beats_after of segment b's slice (clamped to its actual end)
+        head_end_beat = min(b["end_beat"], b["start_beat"] + transition_beats_after)
         head_end_idx = beat_to_sample(head_end_beat, b["beat_times"], b["sr"], len(b["y"]))
         head = b["y"][b["start_idx"]:head_end_idx]
         if len(tail) == 0 or len(head) == 0:
