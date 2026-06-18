@@ -283,9 +283,44 @@ def mix_clicks(slice_y, beat_times, slice_start_t, sr, click_volume):
         mixed = mixed / peak
     return mixed
 
+SEGMENT_KEY_BASES = ("medley_path", "start_unit", "start_beat", "start_time", "duration")
+
+
+def _swap_segments(i, j):
+    """Swap all per-segment session_state values between indices i and j."""
+    for base in SEGMENT_KEY_BASES:
+        a = f"{base}_{i}"
+        b = f"{base}_{j}"
+        av = st.session_state.get(a)
+        bv = st.session_state.get(b)
+        if bv is not None:
+            st.session_state[a] = bv
+        elif a in st.session_state:
+            del st.session_state[a]
+        if av is not None:
+            st.session_state[b] = av
+        elif b in st.session_state:
+            del st.session_state[b]
+
+
 segments = []
 for i in range(int(n_segments)):
-    st.subheader(f"Segment {i + 1}")
+    title_col, up_col, dn_col = st.columns([8, 1, 1])
+    title_col.subheader(f"Segment {i + 1}")
+    up_col.button(
+        "↑",
+        key=f"move_up_{i}",
+        disabled=(i == 0),
+        on_click=_swap_segments,
+        args=(i, i - 1),
+    )
+    dn_col.button(
+        "↓",
+        key=f"move_dn_{i}",
+        disabled=(i == int(n_segments) - 1),
+        on_click=_swap_segments,
+        args=(i, i + 1),
+    )
     path_key = f"medley_path_{i}"
     if path_key not in st.session_state:
         st.session_state[path_key] = ""
