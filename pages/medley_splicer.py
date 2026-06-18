@@ -207,7 +207,7 @@ for _k, _default in [
         st.session_state[_k] = _default
 
 n_segments = st.number_input(
-    "Number of segments", min_value=2, max_value=8, step=1, key="n_segments"
+    "Number of segments", min_value=2, max_value=12, step=1, key="n_segments"
 )
 transition_style = st.selectbox("Transition style", TRANSITION_STYLES, key="transition_style")
 output_format = st.radio(
@@ -454,7 +454,7 @@ for i in range(int(n_segments)):
 
 if len(segments) >= 2:
     st.subheader("Transition previews")
-    transition_beats_before = 32
+    transition_beats_before = 16
     transition_beats_after = 16
     sr = segments[0]["sr"]
     crossfade_samples = int(crossfade_ms / 1000 * sr)
