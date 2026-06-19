@@ -451,34 +451,32 @@ for i in range(int(n_segments)):
         "end_beat": end_beat,
     })
 
-
-if len(segments) >= 2:
-    st.subheader("Transition previews")
-    transition_beats_before = 16
-    transition_beats_after = 16
-    sr = segments[0]["sr"]
-    crossfade_samples = int(crossfade_ms / 1000 * sr)
-    for k in range(len(segments) - 1):
-        a = segments[k]
-        b = segments[k + 1]
-        # Last transition_beats_before of segment a's slice (clamped to its actual start)
-        tail_start_beat = max(a["start_beat"], a["end_beat"] - transition_beats_before)
+    # Inline transition preview: shows up under the *second* of the two contributing
+    # segments so each preview sits next to its splice point.
+    if len(segments) >= 2:
+        a = segments[-2]
+        b = segments[-1]
+        TRANSITION_PREVIEW_BEATS = 16
+        tail_start_beat = max(a["start_beat"], a["end_beat"] - TRANSITION_PREVIEW_BEATS)
         tail_start_idx = beat_to_sample(tail_start_beat, a["beat_times"], a["sr"], len(a["y"]))
         tail = a["y"][tail_start_idx:a["end_idx"]]
-        # First transition_beats_after of segment b's slice (clamped to its actual end)
-        head_end_beat = min(b["end_beat"], b["start_beat"] + transition_beats_after)
+        head_end_beat = min(b["end_beat"], b["start_beat"] + TRANSITION_PREVIEW_BEATS)
         head_end_idx = beat_to_sample(head_end_beat, b["beat_times"], b["sr"], len(b["y"]))
         head = b["y"][b["start_idx"]:head_end_idx]
+        cf_samples = int(crossfade_ms / 1000 * b["sr"])
         if len(tail) == 0 or len(head) == 0:
-            st.caption(f"Transition {k + 1}: empty slice, nothing to preview")
-            continue
-        snippet = crossfade_pieces(tail, head, transition_style, crossfade_samples)
-        st.caption(
-            f"Transition {k + 1}: end of `{os.path.basename(a['path'])}` "
-            f"→ start of `{os.path.basename(b['path'])}` "
-            f"({len(tail) / sr:.2f}s + {len(head) / sr:.2f}s)"
-        )
-        st.audio(snippet, sample_rate=sr)
+            st.caption(
+                f"Transition from segment {len(segments) - 1}: empty slice, nothing to preview"
+            )
+        else:
+            snippet = crossfade_pieces(tail, head, transition_style, cf_samples)
+            st.caption(
+                f"Transition from segment {len(segments) - 1}: "
+                f"end of `{os.path.basename(a['path'])}` "
+                f"→ start of `{os.path.basename(b['path'])}` "
+                f"({len(tail) / b['sr']:.2f}s + {len(head) / b['sr']:.2f}s)"
+            )
+            st.audio(snippet, sample_rate=b["sr"])
 
 st.subheader("Stitch")
 if len(segments) < 2:
