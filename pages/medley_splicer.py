@@ -77,14 +77,31 @@ st.set_page_config(page_title="Medley Splicer", layout="wide")
 st.title("Medley Splicer")
 
 
-@st.cache_data(show_spinner="Detecting beats…")
-def analyze_for_medley(audio_path):
-    """Load + beat-detect at a fixed SR so all segments can be concatenated."""
-    y, sr = librosa.load(audio_path, sr=TARGET_SR, mono=True)
+@st.cache_data(show_spinner="Loading audio…")
+def _load_audio_samples(audio_path):
+    """Decode audio at TARGET_SR mono. In-memory cache only (audio is large)."""
+    return librosa.load(audio_path, sr=TARGET_SR, mono=True)
+
+
+@st.cache_data(show_spinner="Detecting beats…", persist="disk")
+def _detect_beats(audio_path):
+    """Return (tempo, beat_times). Persisted to disk so beat positions are
+    stable across server restarts without keeping the audio array in the cache.
+    """
+    y, sr = _load_audio_samples(audio_path)
     tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr)
     beat_times = librosa.frames_to_time(beat_frames, sr=sr).tolist()
     tempo_val = float(tempo) if np.isscalar(tempo) else float(np.asarray(tempo).flatten()[0])
-    return y, sr, tempo_val, beat_times
+    return tempo_val, beat_times
+
+
+def analyze_for_medley(audio_path):
+    """Combined accessor: returns (y, sr, tempo, beat_times). The audio reload
+    is fast and stays in memory for the session; the beats come from disk cache.
+    """
+    y, sr = _load_audio_samples(audio_path)
+    tempo, beat_times = _detect_beats(audio_path)
+    return y, sr, tempo, beat_times
 
 
 def pick_audio_file():
@@ -350,10 +367,10 @@ for i in range(int(n_segments)):
 
     def _redetect_beats(p=path):
         try:
-            analyze_for_medley.clear(p)
+            _detect_beats.clear(p)
         except TypeError:
-            # Older Streamlit: .clear() takes no args; nuke the whole cache instead.
-            analyze_for_medley.clear()
+            # Older Streamlit: .clear() takes no args; nuke the whole beat cache instead.
+            _detect_beats.clear()
 
     redetect_col.button(
         "Re-detect beats",
