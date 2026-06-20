@@ -343,8 +343,22 @@ for i in range(int(n_segments)):
     y, sr, tempo, beat_times = analyze_for_medley(path)
     duration = len(y) / sr
     n_beats = len(beat_times)
-    st.caption(
+    info_col, redetect_col = st.columns([5, 1])
+    info_col.caption(
         f"Duration: {duration:.1f}s  ·  BPM ≈ {tempo:.1f}  ·  Beats detected: {n_beats}"
+    )
+
+    def _redetect_beats(p=path):
+        try:
+            analyze_for_medley.clear(p)
+        except TypeError:
+            # Older Streamlit: .clear() takes no args; nuke the whole cache instead.
+            analyze_for_medley.clear()
+
+    redetect_col.button(
+        "Re-detect beats",
+        key=f"redetect_{i}",
+        on_click=_redetect_beats,
     )
 
     # Per-segment widget defaults via session_state so Load can set them without
