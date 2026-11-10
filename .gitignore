@@ -8,6 +8,7 @@ gcp_client_secret_*.json
 book-bingo-gbapi-*.json
 spotify_web_token.txt
 spotify_cache/
+.streamlit/secrets.toml
 
 # Local data dumps (user-specific, not source)
 favourites.csv
@@ -34,6 +35,7 @@ abc_output/
 video_output/
 extracted_audio/
 medley_output/
+beat_tapper_html/
 *_cache.json
 
 # Editor / OS

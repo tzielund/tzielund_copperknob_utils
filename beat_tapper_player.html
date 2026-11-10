@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Beat Tapper</title>
+<style>
+  html, body {
+    margin: 0; padding: 0;
+    background: #0a0e1a; color: #e8ebf0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    overflow: hidden;
+    touch-action: manipulation;
+    -webkit-user-select: none; user-select: none;
+  }
+  button { font-family: inherit; }
+
+  /* ─── Song picker ────────────────────────────────────────────────────── */
+  #picker {
+    position: fixed; inset: 0;
+    display: flex; flex-direction: column; align-items: center;
+    padding: 50px 20px 40px 20px;
+    overflow-y: auto;
+  }
+  #picker h1 {
+    font-size: 54px; font-weight: 800; margin: 0 0 6px 0;
+    background: linear-gradient(135deg, #38bdf8, #f472b6);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    letter-spacing: -1px;
+  }
+  #picker .tagline { color: #94a3b8; margin-bottom: 32px; font-size: 16px; }
+  #picker-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 14px; width: 100%; max-width: 980px;
+  }
+  .song-card {
+    padding: 20px; background: #111827; border: 1px solid #1f2937;
+    border-radius: 14px; cursor: pointer; text-align: left; color: #e8ebf0;
+    font-family: inherit; transition: transform 0.1s, border-color 0.1s, background 0.1s;
+  }
+  .song-card:hover { background: #1e293b; border-color: #38bdf8; transform: translateY(-2px); }
+  .song-card .t  { font-size: 20px; font-weight: 700; margin-bottom: 6px; }
+  .song-card .m  { font-size: 13px; color: #94a3b8; }
+  .song-card .n  { font-size: 12px; color: #64748b; margin-top: 8px; font-style: italic; }
+  .song-empty {
+    grid-column: 1 / -1; text-align: center; color: #94a3b8;
+    padding: 40px; background: #111827; border: 1px dashed #334155; border-radius: 14px;
+  }
+
+  /* ─── Game ───────────────────────────────────────────────────────────── */
+  #game { position: fixed; inset: 0; display: none; }
+
+  #runway {
+    position: absolute;
+    left: 50%; transform: translateX(-50%);
+    top: 0; bottom: 0;
+    width: 220px;
+    background: linear-gradient(180deg,
+      rgba(255,255,255,0.00) 0%,
+      rgba(255,255,255,0.03) 70%,
+      rgba(255,255,255,0.08) 100%);
+    border-left: 1px solid rgba(255,255,255,0.05);
+    border-right: 1px solid rgba(255,255,255,0.05);
+  }
+  .note {
+    position: absolute; left: 10px;
+    width: 200px; height: 44px;
+    border-radius: 24px;
+    background: radial-gradient(circle at 30% 30%, #fb7185, #e11d48);
+    box-shadow: 0 0 25px rgba(244,63,94,0.7);
+    will-change: transform;
+    display: none;
+  }
+  .note.perfect { background: radial-gradient(circle at 30% 30%, #86efac, #16a34a); box-shadow: 0 0 25px rgba(34,197,94,0.8); }
+  .note.good    { background: radial-gradient(circle at 30% 30%, #fde68a, #ca8a04); box-shadow: 0 0 25px rgba(234,179,8,0.8); }
+  .note.miss    { background: radial-gradient(circle at 30% 30%, #94a3b8, #475569); box-shadow: none; opacity: 0.35; }
+
+  #hitline {
+    position: absolute; left: 0; right: 0;
+    height: 6px;
+    background: linear-gradient(90deg, transparent 0%, #38bdf8 20%, #38bdf8 80%, transparent 100%);
+    box-shadow: 0 0 25px #38bdf8;
+    pointer-events: none;
+  }
+
+  #hud {
+    position: absolute; top: 20px; left: 20px;
+    font-size: 15px; line-height: 1.6;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+  }
+  #hud .score { font-size: 56px; font-weight: 800; color: #38bdf8; margin-bottom: 4px; }
+  #hud .lbl { color: #94a3b8; display: inline-block; width: 90px; }
+  #hud .v { font-weight: 600; color: #e8ebf0; }
+
+  #info {
+    position: absolute; top: 20px; right: 20px;
+    text-align: right; font-size: 13px; color: #94a3b8;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+    max-width: 320px;
+  }
+  #info h1 { font-size: 22px; color: #e8ebf0; margin: 0 0 6px 0; font-weight: 700; }
+  #info .hint { margin-top: 10px; font-size: 12px; }
+  #info .skipnote { margin-top: 6px; font-size: 12px; color: #f472b6; }
+
+  #feedback {
+    position: absolute; left: 50%;
+    transform: translateX(-50%);
+    font-weight: 900; opacity: 0; pointer-events: none;
+    transition: opacity 0.15s, transform 0.15s;
+    text-shadow: 0 4px 20px rgba(0,0,0,0.6);
+  }
+
+  #start, #summary button, #back-to-picker {
+    cursor: pointer; border: none;
+    padding: 20px 48px; font-size: 22px; font-weight: 700;
+    border-radius: 14px;
+    background: linear-gradient(135deg, #38bdf8, #0ea5e9);
+    color: white;
+    box-shadow: 0 0 40px rgba(56,189,248,0.4);
+    transition: transform 0.1s;
+  }
+  #start:hover, #summary button:hover, #back-to-picker:hover { transform: scale(1.04); }
+  #start { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); }
+  #back-to-picker {
+    position: absolute; bottom: 20px; left: 20px;
+    padding: 10px 20px; font-size: 14px; font-weight: 600;
+    background: #1e293b; box-shadow: none;
+  }
+  #back-to-picker:hover { background: #334155; transform: none; }
+
+  #summary {
+    position: absolute; left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    background: #111827; border: 1px solid #1f2937;
+    padding: 36px 44px; border-radius: 18px;
+    min-width: 420px; display: none;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+  }
+  #summary h2 { margin: 0 0 20px 0; font-size: 32px; color: #38bdf8; }
+  #summary .row { font-size: 20px; margin: 10px 0; display: flex; justify-content: space-between; }
+  #summary .row .lbl { color: #94a3b8; }
+  #summary .row .v { font-weight: 700; }
+  #summary .btnrow { display: flex; gap: 12px; margin-top: 24px; }
+  #summary button { font-size: 16px; padding: 12px 24px; }
+  #summary button.secondary { background: #334155; box-shadow: none; }
+</style>
+</head>
+<body>
+
+<!-- ─── Song picker (shown first) ────────────────────────────────────────── -->
+<div id="picker">
+  <h1>Beat Tapper</h1>
+  <div class="tagline">Tap along to the beat. Pick a song to start.</div>
+  <div id="picker-list"></div>
+</div>
+
+<!-- ─── Game (shown when a song is loaded) ──────────────────────────────── -->
+<div id="game">
+  <div id="runway"></div>
+  <div id="hitline"></div>
+
+  <div id="hud">
+    <div class="score"><span id="s_score">0</span></div>
+    <div><span class="lbl">Perfect</span><span class="v" id="s_perfect">0</span></div>
+    <div><span class="lbl">Good</span><span class="v" id="s_good">0</span></div>
+    <div><span class="lbl">Miss</span><span class="v" id="s_miss">0</span></div>
+    <div><span class="lbl">Accuracy</span><span class="v" id="s_acc">—</span></div>
+  </div>
+
+  <div id="info">
+    <h1 id="i_title"></h1>
+    <div id="i_meta"></div>
+    <div id="i_skip" class="skipnote" style="display:none"></div>
+    <div class="hint">Tap <b>SPACE</b> · click · or touch<br>on each beat as it reaches the line</div>
+  </div>
+
+  <div id="feedback"></div>
+  <button id="start">Start</button>
+  <button id="back-to-picker">← Pick another song</button>
+
+  <div id="summary">
+    <h2 id="f_grade">Done</h2>
+    <div class="row"><span class="lbl">Score</span><span class="v" id="f_score">0</span></div>
+    <div class="row"><span class="lbl">Perfect</span><span class="v" id="f_perfect">0</span></div>
+    <div class="row"><span class="lbl">Good</span><span class="v" id="f_good">0</span></div>
+    <div class="row"><span class="lbl">Miss</span><span class="v" id="f_miss">0</span></div>
+    <div class="row"><span class="lbl">Accuracy</span><span class="v"><span id="f_acc">0</span>%</span></div>
+    <div class="row"><span class="lbl">Mean error</span><span class="v"><span id="f_err">0</span> ms</span></div>
+    <div class="row"><span class="lbl">Timing</span><span class="v" id="f_bias">—</span></div>
+    <div class="btnrow">
+      <button onclick="window.CK.playAgain()">Play Again</button>
+      <button class="secondary" onclick="window.CK.returnToPicker()">Back to Picker</button>
+    </div>
+  </div>
+</div>
+
+<audio id="audio" preload="auto"></audio>
+
+<script>
+"use strict";
+
+// ─── Scoring config ──────────────────────────────────────────────────────────
+const LEAD        = 1.8;    // seconds a note is visible before its beat
+const PERFECT     = 0.060;  // ±60 ms
+const GOOD        = 0.150;  // ±150 ms
+const MISS_AFTER  = 0.200;  // auto-miss this many seconds past the beat
+
+// ─── DOM refs ────────────────────────────────────────────────────────────────
+const audio    = document.getElementById("audio");
+const picker   = document.getElementById("picker");
+const pickList = document.getElementById("picker-list");
+const game     = document.getElementById("game");
+const runway   = document.getElementById("runway");
+const hitline  = document.getElementById("hitline");
+const feedback = document.getElementById("feedback");
+const startBtn = document.getElementById("start");
+const summary  = document.getElementById("summary");
+const backBtn  = document.getElementById("back-to-picker");
+
+// ─── Game state ──────────────────────────────────────────────────────────────
+let currentSong = null;         // {title, beats, intro_skip, outro_skip, ...}
+let activeBeats = [];           // beats slice we actually score against
+let notes = [];                 // {t, el, used}
+let errors = [];                // signed tap errors (sec, + = late)
+let state  = { perfect: 0, good: 0, miss: 0, score: 0, combo: 0, maxCombo: 0 };
+let hitY = 0;
+let finished = false;
+let started  = false;
+
+// ─── Picker ──────────────────────────────────────────────────────────────────
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[<>&"]/g, c =>
+    ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
+}
+
+function renderPicker() {
+  const songs = window.CK_SONGS || [];
+  if (songs.length === 0) {
+    pickList.innerHTML =
+      '<div class="song-empty">No songs in the library yet.<br>' +
+      'Use the Streamlit builder (Beat Tapper Builder page) to analyze a song ' +
+      'and save it to the library.</div>';
+    return;
+  }
+  pickList.innerHTML = songs.map(s => `
+    <button class="song-card" data-slug="${esc(s.slug)}">
+      <div class="t">${esc(s.title)}</div>
+      <div class="m">${Math.round(s.bpm)} BPM · ${s.beats_count} beats · ${s.duration.toFixed(1)}s</div>
+      ${s.notes ? `<div class="n">${esc(s.notes)}</div>` : ''}
+    </button>
+  `).join("");
+  pickList.querySelectorAll(".song-card").forEach(el => {
+    el.addEventListener("click", () => loadSong(el.dataset.slug));
+  });
+}
+
+function loadSong(slug) {
+  // Dynamically inject the song's data script; it calls window.CK_LOAD(slug, data).
+  const sc = document.createElement("script");
+  sc.src = "library/" + encodeURIComponent(slug) + ".js";
+  sc.onerror = () => alert("Could not load library/" + slug + ".js");
+  document.head.appendChild(sc);
+}
+
+// ─── Game ────────────────────────────────────────────────────────────────────
+window.CK_LOAD = function(slug, data) {
+  currentSong = data;
+  picker.style.display = "none";
+  game.style.display = "block";
+
+  audio.src = "data:" + data.audio_mime + ";base64," + data.audio_b64;
+
+  document.getElementById("i_title").textContent = data.title;
+  document.getElementById("i_meta").textContent =
+    Math.round(data.bpm) + " BPM · " + data.beats.length + " beats · " + data.duration.toFixed(1) + "s";
+
+  const skipStart = data.intro_skip || 0;
+  const skipEnd   = data.outro_skip || 0;
+  activeBeats = data.beats.slice(skipStart, data.beats.length - skipEnd);
+
+  const skipDiv = document.getElementById("i_skip");
+  if (skipStart || skipEnd) {
+    const parts = [];
+    if (skipStart) parts.push(skipStart + " intro beat" + (skipStart === 1 ? "" : "s") + " skipped");
+    if (skipEnd)   parts.push(skipEnd + " outro beat" + (skipEnd === 1 ? "" : "s") + " skipped");
+    skipDiv.textContent = parts.join(" · ");
+    skipDiv.style.display = "block";
+  } else {
+    skipDiv.style.display = "none";
+  }
+
+  resetGameState();
+  summary.style.display = "none";
+  startBtn.style.display = "block";
+  startBtn.textContent = "Start";
+};
+
+function resetGameState() {
+  notes = []; errors = [];
+  state = { perfect: 0, good: 0, miss: 0, score: 0, combo: 0, maxCombo: 0 };
+  finished = false; started = false;
+  runway.innerHTML = "";
+  updateHUD();
+}
+
+function layout() {
+  hitY = Math.round(window.innerHeight * 0.78);
+  hitline.style.top = (hitY - 3) + "px";
+  feedback.style.top = (hitY - 110) + "px";
+}
+
+function buildNotes() {
+  runway.innerHTML = "";
+  notes = activeBeats.map(t => {
+    const el = document.createElement("div");
+    el.className = "note";
+    runway.appendChild(el);
+    return { t, el, used: false };
+  });
+}
+
+function render() {
+  if (finished) return;
+  const now = audio.currentTime;
+  for (const n of notes) {
+    const dt = n.t - now;
+    if (dt > LEAD) {
+      if (n.el.style.display !== "none") n.el.style.display = "none";
+      continue;
+    }
+    if (dt < -MISS_AFTER) {
+      if (!n.used) autoMiss(n);
+      if (n.el.style.display !== "none") n.el.style.display = "none";
+      continue;
+    }
+    n.el.style.display = "block";
+    const p = 1 - (dt / LEAD);
+    const y = Math.round(p * hitY - 22);
+    n.el.style.transform = "translate3d(0," + y + "px,0)";
+  }
+  requestAnimationFrame(render);
+}
+
+function tap() {
+  if (finished || !started) return;
+  const now = audio.currentTime;
+  let best = null, bestAbs = Infinity;
+  for (const n of notes) {
+    if (n.used) continue;
+    if (n.t > now + GOOD) break;
+    const d = Math.abs(n.t - now);
+    if (d < bestAbs) { bestAbs = d; best = n; }
+  }
+  if (!best || bestAbs > GOOD) {
+    state.miss++;
+    state.combo = 0;
+    flash("—", "#64748b", 28);
+    updateHUD();
+    return;
+  }
+  const err = now - best.t;
+  errors.push(err);
+  best.used = true;
+  state.combo++;
+  if (state.combo > state.maxCombo) state.maxCombo = state.combo;
+  if (bestAbs < PERFECT) {
+    best.el.classList.add("perfect");
+    state.perfect++;
+    state.score += 100 + Math.min(state.combo, 20) * 2;
+    flash("Perfect!", "#86efac", 56);
+  } else {
+    best.el.classList.add("good");
+    state.good++;
+    state.score += 50;
+    flash("Good", "#fde68a", 44);
+  }
+  updateHUD();
+}
+
+function autoMiss(n) {
+  n.used = true;
+  n.el.classList.add("miss");
+  state.miss++;
+  state.combo = 0;
+  updateHUD();
+}
+
+function flash(text, color, size) {
+  feedback.textContent = text;
+  feedback.style.color = color;
+  feedback.style.fontSize = size + "px";
+  feedback.style.opacity = 1;
+  feedback.style.transform = "translateX(-50%) scale(1.1)";
+  clearTimeout(window._fbT);
+  window._fbT = setTimeout(() => {
+    feedback.style.opacity = 0;
+    feedback.style.transform = "translateX(-50%) scale(1)";
+  }, 280);
+}
+
+function updateHUD() {
+  document.getElementById("s_score").textContent   = state.score;
+  document.getElementById("s_perfect").textContent = state.perfect;
+  document.getElementById("s_good").textContent    = state.good;
+  document.getElementById("s_miss").textContent    = state.miss;
+  const total = state.perfect + state.good + state.miss;
+  const acc = total ? Math.round(100 * (state.perfect + state.good) / total) : 0;
+  document.getElementById("s_acc").textContent = total ? (acc + "%") : "—";
+}
+
+function finish() {
+  if (finished) return;
+  finished = true;
+  for (const n of notes) if (!n.used) { n.used = true; state.miss++; }
+  updateHUD();
+
+  const total = state.perfect + state.good + state.miss;
+  const acc = total ? (100 * (state.perfect + state.good) / total) : 0;
+  const errMs = errors.length
+    ? Math.round(1000 * errors.reduce((a,b) => a + Math.abs(b), 0) / errors.length)
+    : 0;
+  const mean = errors.length ? errors.reduce((a,b) => a + b, 0) / errors.length : 0;
+  const bias = Math.abs(mean) < 0.015 ? "on the beat"
+             : mean > 0 ? Math.round(mean*1000) + " ms late"
+             : Math.round(-mean*1000) + " ms early";
+  const grade = acc >= 95 ? "Virtuoso!"
+              : acc >= 85 ? "Nicely done"
+              : acc >= 70 ? "Solid"
+              : acc >= 50 ? "Keep practicing"
+              : "Work on finding the beat";
+
+  document.getElementById("f_grade").textContent   = grade;
+  document.getElementById("f_score").textContent   = state.score;
+  document.getElementById("f_perfect").textContent = state.perfect;
+  document.getElementById("f_good").textContent    = state.good;
+  document.getElementById("f_miss").textContent    = state.miss;
+  document.getElementById("f_acc").textContent     = acc.toFixed(1);
+  document.getElementById("f_err").textContent     = errMs;
+  document.getElementById("f_bias").textContent    = bias;
+  summary.style.display = "block";
+}
+
+window.CK = {
+  playAgain() {
+    if (!currentSong) return;
+    summary.style.display = "none";
+    resetGameState();
+    startBtn.style.display = "block";
+    audio.currentTime = 0;
+  },
+  returnToPicker() {
+    summary.style.display = "none";
+    audio.pause();
+    game.style.display = "none";
+    picker.style.display = "flex";
+    resetGameState();
+    currentSong = null;
+  },
+};
+
+// ─── Wire up ─────────────────────────────────────────────────────────────────
+layout();
+window.addEventListener("resize", layout);
+
+startBtn.addEventListener("click", () => {
+  startBtn.style.display = "none";
+  buildNotes();
+  audio.currentTime = 0;
+  audio.play().then(() => {
+    started = true;
+    requestAnimationFrame(render);
+  }).catch(err => {
+    alert("Could not play audio: " + err.message);
+    startBtn.style.display = "block";
+  });
+});
+
+backBtn.addEventListener("click", () => window.CK.returnToPicker());
+audio.addEventListener("ended", finish);
+
+document.addEventListener("keydown", (e) => {
+  if (e.code === "Space") {
+    e.preventDefault();
+    if (started && !finished) tap();
+  }
+});
+game.addEventListener("pointerdown", (e) => {
+  if (e.target.tagName === "BUTTON") return;
+  tap();
+});
+
+// ─── Load library index ──────────────────────────────────────────────────────
+(function() {
+  const s = document.createElement("script");
+  s.src = "library/index.js";
+  s.onload  = renderPicker;
+  s.onerror = renderPicker;   // show the empty state
+  document.head.appendChild(s);
+})();
+</script>
+</body>
+</html>
