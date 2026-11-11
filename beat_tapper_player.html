@@ -28,7 +28,14 @@
     -webkit-background-clip: text; background-clip: text; color: transparent;
     letter-spacing: -1px;
   }
-  #picker .tagline { color: #94a3b8; margin-bottom: 32px; font-size: 16px; }
+  #picker .tagline { color: #94a3b8; margin-bottom: 14px; font-size: 16px; }
+  #picker .xlink {
+    color: #f472b6; text-decoration: none; font-size: 14px;
+    margin-bottom: 28px; border: 1px solid rgba(244,114,182,0.4);
+    padding: 8px 16px; border-radius: 20px;
+    transition: background 0.1s, border-color 0.1s;
+  }
+  #picker .xlink:hover { background: rgba(244,114,182,0.12); border-color: #f472b6; }
   #picker-list {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
@@ -152,6 +159,7 @@
 <div id="picker">
   <h1>Beat Tapper</h1>
   <div class="tagline">Tap along to the beat. Pick a song to start.</div>
+  <a class="xlink" href="beat_tapper_recorder.html">Fix wrong beats → Tap recorder</a>
   <div id="picker-list"></div>
 </div>
 
@@ -191,6 +199,7 @@
     <div class="btnrow">
       <button onclick="window.CK.playAgain()">Play Again</button>
       <button class="secondary" onclick="window.CK.returnToPicker()">Back to Picker</button>
+      <a href="beat_tapper_recorder.html" class="secondary" style="text-decoration:none;display:inline-flex;align-items:center;padding:12px 24px;background:#334155;color:#e8ebf0;border-radius:14px;font-weight:700;font-size:16px;cursor:pointer;">Fix beats →</a>
     </div>
   </div>
 </div>

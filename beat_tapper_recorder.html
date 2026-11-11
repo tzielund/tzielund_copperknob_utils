@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Beat Tapper — Tap Recorder</title>
+<style>
+  html, body {
+    margin: 0; padding: 0;
+    background: #0a0e1a; color: #e8ebf0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    overflow: hidden; touch-action: manipulation;
+    -webkit-user-select: none; user-select: none;
+  }
+  button { font-family: inherit; }
+
+  /* ─── Picker (same look as player) ───────────────────────────────────── */
+  #picker {
+    position: fixed; inset: 0;
+    display: flex; flex-direction: column; align-items: center;
+    padding: 50px 20px 40px 20px; overflow-y: auto;
+  }
+  #picker h1 {
+    font-size: 54px; font-weight: 800; margin: 0 0 6px 0;
+    background: linear-gradient(135deg, #f472b6, #a855f7);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    letter-spacing: -1px;
+  }
+  #picker .tagline { color: #94a3b8; margin-bottom: 14px; font-size: 16px; text-align: center; max-width: 560px; }
+  #picker .xlink {
+    color: #38bdf8; text-decoration: none; font-size: 14px;
+    margin-bottom: 28px; border: 1px solid rgba(56,189,248,0.4);
+    padding: 8px 16px; border-radius: 20px;
+    transition: background 0.1s, border-color 0.1s;
+  }
+  #picker .xlink:hover { background: rgba(56,189,248,0.12); border-color: #38bdf8; }
+  #picker-list {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 14px; width: 100%; max-width: 980px;
+  }
+  .song-card {
+    padding: 20px; background: #111827; border: 1px solid #1f2937;
+    border-radius: 14px; cursor: pointer; text-align: left; color: #e8ebf0;
+    font-family: inherit; transition: transform 0.1s, border-color 0.1s, background 0.1s;
+  }
+  .song-card:hover { background: #1e293b; border-color: #f472b6; transform: translateY(-2px); }
+  .song-card .t { font-size: 20px; font-weight: 700; margin-bottom: 6px; }
+  .song-card .m { font-size: 13px; color: #94a3b8; }
+  .song-empty {
+    grid-column: 1 / -1; text-align: center; color: #94a3b8;
+    padding: 40px; background: #111827; border: 1px dashed #334155; border-radius: 14px;
+  }
+
+  /* ─── Recorder ───────────────────────────────────────────────────────── */
+  #recorder {
+    position: fixed; inset: 0; display: none;
+    flex-direction: column; align-items: center; justify-content: center;
+    padding: 20px;
+  }
+  #r_info { position: absolute; top: 20px; left: 20px; right: 20px; text-align: center; }
+  #r_title { font-size: 24px; font-weight: 700; margin: 0; }
+  #r_meta  { font-size: 13px; color: #94a3b8; margin-top: 4px; }
+
+  /* Horizontal timeline: detected beats scroll past a center playhead */
+  #timeline {
+    position: relative; width: min(960px, 90vw); height: 90px;
+    margin: 20px 0;
+    background: #111827; border: 1px solid #1f2937; border-radius: 12px;
+    overflow: hidden;
+  }
+  #tl-playhead {
+    position: absolute; top: 0; bottom: 0;
+    left: 50%; width: 3px;
+    background: #f472b6; box-shadow: 0 0 20px #f472b6;
+    transform: translateX(-50%); z-index: 3;
+  }
+  .tl-beat {
+    position: absolute; top: 15px;
+    width: 2px; height: 30px;
+    background: #64748b;
+  }
+  .tl-tap {
+    position: absolute; bottom: 10px;
+    width: 10px; height: 10px; border-radius: 50%;
+    background: #fde68a; box-shadow: 0 0 12px #fde68a;
+    transform: translateX(-50%);
+  }
+
+  #r_time {
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    font-size: 72px; font-weight: 800; color: #38bdf8;
+    text-shadow: 0 2px 20px rgba(56, 189, 248, 0.4);
+    margin: 10px 0;
+  }
+  #r_progress {
+    width: min(960px, 90vw); height: 6px;
+    background: #1e293b; border-radius: 3px;
+    overflow: hidden; margin-bottom: 20px;
+  }
+  #r_progress_fill {
+    height: 100%; width: 0%;
+    background: linear-gradient(90deg, #38bdf8, #f472b6);
+    transition: width 0.1s linear;
+  }
+
+  #r_counter {
+    font-size: 48px; font-weight: 800; color: #fde68a;
+    margin-bottom: 4px;
+  }
+  #r_counter .lbl { font-size: 16px; color: #94a3b8; font-weight: 500; margin-left: 10px; }
+
+  #r_flash {
+    position: absolute;
+    width: 180px; height: 180px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(253, 230, 138, 0.8) 0%, transparent 70%);
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.1s, transform 0.3s;
+    z-index: 2;
+  }
+
+  #r_hint { color: #94a3b8; font-size: 15px; margin-top: 20px; text-align: center; }
+  #r_hint b { color: #fde68a; }
+
+  #r_controls { margin-top: 30px; display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+  .btn {
+    cursor: pointer; border: none;
+    padding: 14px 28px; font-size: 16px; font-weight: 700;
+    border-radius: 12px;
+    background: #334155; color: #e8ebf0;
+    transition: transform 0.1s, background 0.1s;
+  }
+  .btn:hover { background: #475569; transform: translateY(-1px); }
+  .btn:active { transform: translateY(0); }
+  .btn.primary {
+    background: linear-gradient(135deg, #f472b6, #a855f7);
+    box-shadow: 0 0 30px rgba(244, 114, 182, 0.4);
+    padding: 16px 36px; font-size: 18px;
+  }
+  .btn.primary:hover { background: linear-gradient(135deg, #ec4899, #9333ea); }
+  .btn.danger { background: #7f1d1d; }
+  .btn.danger:hover { background: #991b1b; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+  /* ─── End screen ─────────────────────────────────────────────────────── */
+  #done {
+    position: fixed; inset: 0; display: none;
+    flex-direction: column; align-items: center; justify-content: center;
+    padding: 40px 20px; background: rgba(10, 14, 26, 0.95);
+  }
+  #done h2 { font-size: 36px; color: #fde68a; margin: 0 0 20px 0; }
+  #done .stats {
+    background: #111827; border: 1px solid #1f2937; border-radius: 14px;
+    padding: 24px 32px; margin-bottom: 24px; min-width: 360px;
+  }
+  #done .stats .row { font-size: 18px; margin: 8px 0; display: flex; justify-content: space-between; gap: 30px; }
+  #done .stats .row .lbl { color: #94a3b8; }
+  #done .stats .row .v { font-weight: 700; }
+  #done .regions {
+    background: #0a0e1a; border: 1px solid #1f2937; border-radius: 10px;
+    padding: 12px 16px; margin-top: 16px;
+    font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px;
+    max-height: 180px; overflow-y: auto;
+  }
+  #done .btnrow { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+</style>
+</head>
+<body>
+
+<!-- ─── Song picker ─────────────────────────────────────────────────────── -->
+<div id="picker">
+  <h1>Tap Recorder</h1>
+  <div class="tagline">
+    Tap along with a song to override librosa's detection in sections where
+    it gets confused (tempo changes, syncopated bridges, half-time breaks).
+    Download the resulting JSON and import it in the builder.
+  </div>
+  <a class="xlink" href="beat_tapper.html">← Back to player</a>
+  <div id="picker-list"></div>
+</div>
+
+<!-- ─── Recording UI ────────────────────────────────────────────────────── -->
+<div id="recorder">
+  <div id="r_info">
+    <h1 id="r_title"></h1>
+    <div id="r_meta"></div>
+  </div>
+
+  <div id="timeline">
+    <div id="tl-playhead"></div>
+  </div>
+
+  <div id="r_time">0:00.00</div>
+  <div id="r_progress"><div id="r_progress_fill"></div></div>
+
+  <div id="r_counter"><span id="r_tapcount">0</span><span class="lbl">taps recorded</span></div>
+
+  <div id="r_flash"></div>
+
+  <div id="r_hint">
+    Press <b>SPACE</b> · click · or touch the screen on each beat you want to mark.
+  </div>
+
+  <div id="r_controls">
+    <button id="r_start" class="btn primary">Start recording</button>
+    <button id="r_pause" class="btn" style="display:none">Pause</button>
+    <button id="r_resume" class="btn primary" style="display:none">Resume</button>
+    <button id="r_clear" class="btn danger" style="display:none">Clear taps</button>
+    <button id="r_finish" class="btn" style="display:none">Finish early</button>
+    <button id="r_back" class="btn">Back to picker</button>
+  </div>
+</div>
+
+<!-- ─── End screen ──────────────────────────────────────────────────────── -->
+<div id="done">
+  <h2 id="d_title">Recording complete</h2>
+  <div class="stats">
+    <div class="row"><span class="lbl">Taps captured</span><span class="v" id="d_count">0</span></div>
+    <div class="row"><span class="lbl">Span</span><span class="v" id="d_span">—</span></div>
+    <div class="row"><span class="lbl">Regions</span><span class="v" id="d_regions">0</span></div>
+    <div class="row"><span class="lbl">Avg interval</span><span class="v" id="d_interval">—</span></div>
+    <div class="regions" id="d_regionlist"></div>
+  </div>
+  <div class="btnrow">
+    <button id="d_download" class="btn primary">Download taps JSON</button>
+    <button id="d_again" class="btn">Record again</button>
+    <button id="d_back" class="btn">Back to picker</button>
+    <a href="beat_tapper.html" class="btn" style="text-decoration:none">Open player →</a>
+  </div>
+</div>
+
+<audio id="audio" preload="auto"></audio>
+
+<script>
+"use strict";
+
+// ─── Config ──────────────────────────────────────────────────────────────────
+const TIMELINE_SPAN = 4.0;   // seconds visible on the horizontal timeline
+const GAP_THRESHOLD = 2.5;   // taps separated by > this many sec start a new region
+const REGION_MARGIN = 0.25;  // seconds padded around each region's first/last tap
+
+// ─── DOM ─────────────────────────────────────────────────────────────────────
+const audio      = document.getElementById("audio");
+const picker     = document.getElementById("picker");
+const pickList   = document.getElementById("picker-list");
+const recorder   = document.getElementById("recorder");
+const doneScreen = document.getElementById("done");
+const timeline   = document.getElementById("timeline");
+const flashEl    = document.getElementById("r_flash");
+
+// ─── State ───────────────────────────────────────────────────────────────────
+let currentSong = null;
+let taps = [];          // audio.currentTime of each recorded tap (seconds)
+let recording = false;  // true while audio is playing and we're accepting taps
+let rafToken = null;
+let beatTickEls = [];   // reused DOM nodes for detected beats on the timeline
+let tapTickEls  = [];   // one per tap on the timeline
+
+// ─── Picker ──────────────────────────────────────────────────────────────────
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[<>&"]/g, c =>
+    ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
+}
+
+function renderPicker() {
+  const songs = window.CK_SONGS || [];
+  if (songs.length === 0) {
+    pickList.innerHTML =
+      '<div class="song-empty">No songs in the library yet.<br>' +
+      'Build one in the Streamlit Beat Tapper Builder first.</div>';
+    return;
+  }
+  pickList.innerHTML = songs.map(s => `
+    <button class="song-card" data-slug="${esc(s.slug)}">
+      <div class="t">${esc(s.title)}</div>
+      <div class="m">${Math.round(s.bpm)} BPM · ${s.beats_count} beats · ${s.duration.toFixed(1)}s</div>
+    </button>
+  `).join("");
+  pickList.querySelectorAll(".song-card").forEach(el => {
+    el.addEventListener("click", () => loadSong(el.dataset.slug));
+  });
+}
+
+function loadSong(slug) {
+  const sc = document.createElement("script");
+  sc.src = "library/" + encodeURIComponent(slug) + ".js";
+  sc.onerror = () => alert("Could not load library/" + slug + ".js");
+  document.head.appendChild(sc);
+}
+
+window.CK_LOAD = function(slug, data) {
+  currentSong = Object.assign({ slug }, data);
+  picker.style.display = "none";
+  doneScreen.style.display = "none";
+  recorder.style.display = "flex";
+
+  audio.src = "data:" + data.audio_mime + ";base64," + data.audio_b64;
+  document.getElementById("r_title").textContent = data.title;
+  document.getElementById("r_meta").textContent =
+    Math.round(data.bpm) + " BPM · " + data.beats.length + " detected beats · " +
+    data.duration.toFixed(1) + "s";
+
+  // Reset state
+  taps = [];
+  recording = false;
+  updateCounter();
+  showStartControls();
+  // Pre-create beat ticks (one per detected beat) — positioned each frame.
+  timeline.querySelectorAll(".tl-beat, .tl-tap").forEach(n => n.remove());
+  beatTickEls = data.beats.map(() => {
+    const el = document.createElement("div");
+    el.className = "tl-beat";
+    el.style.display = "none";
+    timeline.appendChild(el);
+    return el;
+  });
+  tapTickEls = [];
+  renderFrame();
+};
+
+// ─── Timeline rendering ──────────────────────────────────────────────────────
+function renderFrame() {
+  cancelAnimationFrame(rafToken);
+  const w = timeline.clientWidth;
+  const now = audio.currentTime;
+  const pxPerSec = w / TIMELINE_SPAN;
+  const centerX = w / 2;
+
+  // Detected beats
+  if (currentSong) {
+    for (let i = 0; i < currentSong.beats.length; i++) {
+      const t = currentSong.beats[i];
+      const dx = (t - now) * pxPerSec;
+      const el = beatTickEls[i];
+      if (dx < -centerX - 10 || dx > centerX + 10) {
+        if (el.style.display !== "none") el.style.display = "none";
+      } else {
+        el.style.display = "block";
+        el.style.left = (centerX + dx) + "px";
+      }
+    }
+  }
+
+  // Recorded taps
+  for (let i = 0; i < taps.length; i++) {
+    const t = taps[i];
+    let el = tapTickEls[i];
+    if (!el) {
+      el = document.createElement("div");
+      el.className = "tl-tap";
+      timeline.appendChild(el);
+      tapTickEls[i] = el;
+    }
+    const dx = (t - now) * pxPerSec;
+    if (dx < -centerX - 10 || dx > centerX + 10) {
+      if (el.style.display !== "none") el.style.display = "none";
+    } else {
+      el.style.display = "block";
+      el.style.left = (centerX + dx) + "px";
+    }
+  }
+
+  // Timecode + progress
+  document.getElementById("r_time").textContent = formatTime(now);
+  if (currentSong) {
+    const pct = Math.min(100, Math.max(0, 100 * now / currentSong.duration));
+    document.getElementById("r_progress_fill").style.width = pct + "%";
+  }
+
+  rafToken = requestAnimationFrame(renderFrame);
+}
+
+function formatTime(t) {
+  const m = Math.floor(t / 60);
+  const s = t - 60 * m;
+  return m + ":" + s.toFixed(2).padStart(5, "0");
+}
+
+// ─── Recording ───────────────────────────────────────────────────────────────
+function startRecording() {
+  if (!currentSong) return;
+  audio.currentTime = 0;
+  taps = [];
+  tapTickEls.forEach(el => el.remove());
+  tapTickEls = [];
+  updateCounter();
+  audio.play().then(() => {
+    recording = true;
+    showRecordingControls();
+  }).catch(err => alert("Could not play audio: " + err.message));
+}
+
+function pauseRecording() {
+  audio.pause();
+  recording = false;
+  showPausedControls();
+}
+
+function resumeRecording() {
+  audio.play().then(() => {
+    recording = true;
+    showRecordingControls();
+  });
+}
+
+function finishRecording() {
+  audio.pause();
+  recording = false;
+  showDone();
+}
+
+function clearTaps() {
+  taps = [];
+  tapTickEls.forEach(el => el.remove());
+  tapTickEls = [];
+  updateCounter();
+}
+
+function tap() {
+  if (!recording) return;
+  const t = audio.currentTime;
+  taps.push(t);
+  updateCounter();
+  // Pulse flash at pointer / center
+  flashEl.style.left = (window.innerWidth / 2 - 90) + "px";
+  flashEl.style.top  = (window.innerHeight / 2 - 90) + "px";
+  flashEl.style.opacity = 1;
+  flashEl.style.transform = "scale(1)";
+  clearTimeout(window._fT);
+  window._fT = setTimeout(() => {
+    flashEl.style.opacity = 0;
+    flashEl.style.transform = "scale(1.3)";
+  }, 80);
+}
+
+function updateCounter() {
+  document.getElementById("r_tapcount").textContent = taps.length;
+}
+
+function showStartControls() {
+  document.getElementById("r_start").style.display   = "inline-block";
+  document.getElementById("r_pause").style.display   = "none";
+  document.getElementById("r_resume").style.display  = "none";
+  document.getElementById("r_clear").style.display   = "none";
+  document.getElementById("r_finish").style.display  = "none";
+  document.getElementById("r_back").style.display    = "inline-block";
+}
+function showRecordingControls() {
+  document.getElementById("r_start").style.display   = "none";
+  document.getElementById("r_pause").style.display   = "inline-block";
+  document.getElementById("r_resume").style.display  = "none";
+  document.getElementById("r_clear").style.display   = "inline-block";
+  document.getElementById("r_finish").style.display  = "inline-block";
+  document.getElementById("r_back").style.display    = "none";
+}
+function showPausedControls() {
+  document.getElementById("r_start").style.display   = "none";
+  document.getElementById("r_pause").style.display   = "none";
+  document.getElementById("r_resume").style.display  = "inline-block";
+  document.getElementById("r_clear").style.display   = "inline-block";
+  document.getElementById("r_finish").style.display  = "inline-block";
+  document.getElementById("r_back").style.display    = "inline-block";
+}
+
+// ─── End screen ──────────────────────────────────────────────────────────────
+function computeRegions(sortedTaps) {
+  if (sortedTaps.length === 0) return [];
+  const regions = [];
+  let cur = [sortedTaps[0]];
+  for (let i = 1; i < sortedTaps.length; i++) {
+    if (sortedTaps[i] - cur[cur.length - 1] > GAP_THRESHOLD) {
+      regions.push(cur);
+      cur = [sortedTaps[i]];
+    } else {
+      cur.push(sortedTaps[i]);
+    }
+  }
+  regions.push(cur);
+  return regions.map(g => ({
+    start: Math.max(0, g[0] - REGION_MARGIN),
+    end:   g[g.length - 1] + REGION_MARGIN,
+    taps:  g.slice(),
+  }));
+}
+
+function showDone() {
+  recorder.style.display = "none";
+  doneScreen.style.display = "flex";
+
+  const sorted = taps.slice().sort((a, b) => a - b);
+  const regions = computeRegions(sorted);
+  document.getElementById("d_count").textContent = sorted.length;
+  document.getElementById("d_regions").textContent = regions.length;
+  if (sorted.length >= 2) {
+    document.getElementById("d_span").textContent =
+      formatTime(sorted[0]) + " → " + formatTime(sorted[sorted.length - 1]);
+    const intervals = [];
+    for (let i = 1; i < sorted.length; i++) {
+      const d = sorted[i] - sorted[i - 1];
+      if (d <= GAP_THRESHOLD) intervals.push(d);
+    }
+    if (intervals.length) {
+      const avg = intervals.reduce((a,b)=>a+b,0) / intervals.length;
+      document.getElementById("d_interval").textContent =
+        (avg*1000).toFixed(0) + " ms (" + (60/avg).toFixed(1) + " BPM)";
+    } else {
+      document.getElementById("d_interval").textContent = "—";
+    }
+  } else {
+    document.getElementById("d_span").textContent = "—";
+    document.getElementById("d_interval").textContent = "—";
+  }
+
+  const list = document.getElementById("d_regionlist");
+  if (regions.length === 0) {
+    list.innerHTML = "<em>No taps recorded.</em>";
+  } else {
+    list.innerHTML = regions.map((r, i) =>
+      `#${i + 1}: ${formatTime(r.start)} → ${formatTime(r.end)} (${r.taps.length} taps)`
+    ).join("<br>");
+  }
+}
+
+function downloadTaps() {
+  const sorted = taps.slice().sort((a, b) => a - b);
+  const payload = {
+    slug: currentSong.slug,
+    song_title: currentSong.title,
+    song_duration: currentSong.duration,
+    recorded_at: new Date().toISOString(),
+    all_taps: sorted.map(t => Math.round(t * 10000) / 10000),
+    regions: computeRegions(sorted).map(r => ({
+      start: Math.round(r.start * 10000) / 10000,
+      end:   Math.round(r.end   * 10000) / 10000,
+      taps:  r.taps.map(t => Math.round(t * 10000) / 10000),
+    })),
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = currentSong.slug + "_taps.json";
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function returnToPicker() {
+  audio.pause();
+  cancelAnimationFrame(rafToken);
+  currentSong = null;
+  recorder.style.display = "none";
+  doneScreen.style.display = "none";
+  picker.style.display = "flex";
+}
+
+// ─── Wire up ─────────────────────────────────────────────────────────────────
+document.getElementById("r_start").addEventListener("click", startRecording);
+document.getElementById("r_pause").addEventListener("click", pauseRecording);
+document.getElementById("r_resume").addEventListener("click", resumeRecording);
+document.getElementById("r_clear").addEventListener("click", clearTaps);
+document.getElementById("r_finish").addEventListener("click", finishRecording);
+document.getElementById("r_back").addEventListener("click", returnToPicker);
+
+document.getElementById("d_download").addEventListener("click", downloadTaps);
+document.getElementById("d_again").addEventListener("click", () => {
+  doneScreen.style.display = "none";
+  recorder.style.display = "flex";
+  taps = [];
+  tapTickEls.forEach(el => el.remove());
+  tapTickEls = [];
+  updateCounter();
+  showStartControls();
+  audio.currentTime = 0;
+});
+document.getElementById("d_back").addEventListener("click", returnToPicker);
+
+audio.addEventListener("ended", () => {
+  if (recording) {
+    recording = false;
+    showDone();
+  }
+});
+
+document.addEventListener("keydown", (e) => {
+  if (e.code === "Space") { e.preventDefault(); tap(); }
+});
+recorder.addEventListener("pointerdown", (e) => {
+  if (e.target.tagName === "BUTTON") return;
+  tap();
+});
+
+// ─── Load library index ──────────────────────────────────────────────────────
+(function() {
+  const s = document.createElement("script");
+  s.src = "library/index.js";
+  s.onload  = renderPicker;
+  s.onerror = renderPicker;
+  document.head.appendChild(s);
+})();
+</script>
+</body>
+</html>

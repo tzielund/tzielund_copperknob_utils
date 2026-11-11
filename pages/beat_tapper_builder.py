@@ -37,10 +37,12 @@ import numpy as np
 import soundfile as sf
 import streamlit as st
 
-OUTPUT_DIR   = Path("beat_tapper_html")
-LIBRARY_DIR  = OUTPUT_DIR / "library"
-PLAYER_SRC   = Path("beat_tapper_player.html")
-PLAYER_DEST  = OUTPUT_DIR / "beat_tapper.html"
+OUTPUT_DIR     = Path("beat_tapper_html")
+LIBRARY_DIR    = OUTPUT_DIR / "library"
+PLAYER_SRC     = Path("beat_tapper_player.html")
+PLAYER_DEST    = OUTPUT_DIR / "beat_tapper.html"
+RECORDER_SRC   = Path("beat_tapper_recorder.html")
+RECORDER_DEST  = OUTPUT_DIR / "beat_tapper_recorder.html"
 
 MIME_BY_EXT = {
     ".mp3":  "audio/mpeg",
@@ -214,11 +216,47 @@ def rebuild_index() -> None:
     (LIBRARY_DIR / "index.js").write_text(js)
 
 
-def ensure_player() -> None:
-    if PLAYER_DEST.exists() and PLAYER_DEST.stat().st_mtime >= PLAYER_SRC.stat().st_mtime:
+def _copy_if_stale(src: Path, dest: Path) -> None:
+    if not src.exists():
         return
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(PLAYER_SRC, PLAYER_DEST)
+    if dest.exists() and dest.stat().st_mtime >= src.stat().st_mtime:
+        return
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(src, dest)
+
+
+def ensure_player() -> None:
+    _copy_if_stale(PLAYER_SRC, PLAYER_DEST)
+    _copy_if_stale(RECORDER_SRC, RECORDER_DEST)
+
+
+def merge_taps(detected: list[float], taps: list[float], proximity: float) -> tuple[list[float], int]:
+    """Apply tap overrides to a detected beat list.
+
+    Any detected beat within `proximity` seconds of ANY tap is dropped, then
+    the tap times are added back in. Detected beats far from every tap are
+    kept — so a short tap-along section only overrides the beats in that
+    stretch of the song.
+
+    Returns (merged_beats_sorted, dropped_count).
+    """
+    if not taps:
+        return sorted(detected), 0
+    sorted_taps = sorted(taps)
+    kept = []
+    dropped = 0
+    # Linear two-pointer scan — both lists are sorted
+    j = 0
+    for b in sorted(detected):
+        # Advance the tap pointer past any taps that are below b - proximity
+        while j < len(sorted_taps) and sorted_taps[j] < b - proximity:
+            j += 1
+        # Check if any tap is within proximity of this beat
+        if j < len(sorted_taps) and sorted_taps[j] <= b + proximity:
+            dropped += 1
+        else:
+            kept.append(b)
+    return sorted(kept + sorted_taps), dropped
 
 
 def delete_song(slug: str) -> None:
@@ -374,6 +412,14 @@ st.caption(
 )
 
 beats_text_key = f"bt_text::{audio_path.resolve()}"
+beats_pending_key = f"bt_text_pending::{audio_path.resolve()}"
+
+# Consume any pending update from a prior button press (merge / nudge / re-detect).
+# Must run BEFORE the text_area is instantiated — Streamlit forbids mutating a
+# widget's session_state key after the widget has rendered in the same run.
+if beats_pending_key in st.session_state:
+    st.session_state[beats_text_key] = st.session_state.pop(beats_pending_key)
+
 if beats_text_key not in st.session_state:
     st.session_state[beats_text_key] = format_beats_text(sess["beats"])
 
@@ -395,14 +441,14 @@ if tool_cols[0].button("Re-detect from audio (overwrites)"):
         bpm, beats = detect_beats(y, sr)
     sess["bpm"] = bpm
     sess["beats"] = beats
-    st.session_state[beats_text_key] = format_beats_text(beats)
+    st.session_state[beats_pending_key] = format_beats_text(beats)
     st.rerun()
 
 nudge_ms = tool_cols[1].number_input("Nudge all (ms)", value=0, step=5)
 if tool_cols[2].button("Apply nudge"):
     if nudge_ms and not parse_errors:
         shifted = [t + nudge_ms / 1000.0 for t in parsed_beats]
-        st.session_state[beats_text_key] = format_beats_text(shifted)
+        st.session_state[beats_pending_key] = format_beats_text(shifted)
         st.rerun()
 
 if tool_cols[3].button("Preview with audible clicks", disabled=bool(parse_errors)):
@@ -417,6 +463,87 @@ if tool_cols[3].button("Preview with audible clicks", disabled=bool(parse_errors
         f"of {len(parsed_beats)} (intro skip {int(intro_skip)}, outro skip {int(outro_skip)})."
     )
     st.audio(wav, format="audio/wav")
+
+# ─── Tap-along import ───────────────────────────────────────────────────────
+
+st.divider()
+st.subheader("Import tap recording")
+st.caption(
+    "Use the recorder page to tap along with the song, then import the "
+    "downloaded JSON here. Detected beats within **proximity** seconds of "
+    "any tap are replaced by the tap times; beats far from every tap are "
+    "left alone, so a short tap-along only overrides the section you "
+    "actually tapped through."
+)
+
+if RECORDER_DEST.exists():
+    st.markdown(
+        f"**Recorder:** `{RECORDER_DEST.resolve()}` — "
+        f"`open '{RECORDER_DEST.resolve()}'` in a terminal to launch it."
+    )
+else:
+    st.info("Recorder HTML not yet copied — click **Save to library** once to copy it into place.")
+
+tap_file = st.file_uploader("Taps JSON (from the recorder)", type=["json"], key="tap_json_upload")
+if tap_file is not None:
+    try:
+        tap_data = json.loads(tap_file.read())
+    except Exception as e:
+        st.error(f"Could not parse JSON: {e}")
+    else:
+        rec_slug  = tap_data.get("slug", "?")
+        rec_title = tap_data.get("song_title", "?")
+        all_taps  = [float(t) for t in tap_data.get("all_taps", [])]
+        regions   = tap_data.get("regions", [])
+
+        cI, cR, cT = st.columns(3)
+        cI.metric("Taps",    len(all_taps))
+        cR.metric("Regions", len(regions))
+        cT.metric("For slug", rec_slug)
+
+        if rec_slug and rec_slug != slug:
+            st.warning(
+                f"Slug mismatch: this recording is for `{rec_slug}` "
+                f"(*{rec_title}*), but you're editing `{slug}`. "
+                "Merging anyway if you continue."
+            )
+
+        proximity = st.slider(
+            "Proximity (seconds)",
+            min_value=0.05, max_value=1.00, value=0.30, step=0.05,
+            help=("A detected beat within this many seconds of any tap is "
+                  "replaced by the tap. Use about half the beat interval: "
+                  "~0.3s suits 100 BPM; drop to ~0.2s for 150+ BPM."),
+        )
+
+        if all_taps and not parse_errors:
+            merged, dropped = merge_taps(parsed_beats, all_taps, proximity)
+            delta = len(merged) - len(parsed_beats)
+            st.caption(
+                f"Merge preview: {len(parsed_beats)} current beats → "
+                f"{len(merged)} after merge · {dropped} detected beats displaced · "
+                f"{len(all_taps)} taps added (net {delta:+d})."
+            )
+            with st.expander(f"Regions in this recording ({len(regions)})"):
+                if regions:
+                    for i, r in enumerate(regions, 1):
+                        st.write(
+                            f"**#{i}** — {r['start']:.2f}s → {r['end']:.2f}s "
+                            f"({len(r.get('taps', []))} taps)"
+                        )
+                else:
+                    st.write("_No regions in this recording._")
+
+            if st.button("Apply merge to beats textarea"):
+                st.session_state[beats_pending_key] = format_beats_text(merged)
+                st.success(
+                    f"Merged {len(all_taps)} taps into the beats list. "
+                    "Scroll up to review, then **Save to library**."
+                )
+                st.rerun()
+        elif not all_taps:
+            st.info("Recording has no taps — nothing to merge.")
+
 
 # ─── Save ────────────────────────────────────────────────────────────────────
 
