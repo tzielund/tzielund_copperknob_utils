@@ -406,9 +406,16 @@ if tool_cols[2].button("Apply nudge"):
         st.rerun()
 
 if tool_cols[3].button("Preview with audible clicks", disabled=bool(parse_errors)):
-    with st.spinner("Rendering click preview…"):
+    # Click only the beats that will actually be scored — skipping intro/outro
+    # so the preview matches what the player will do.
+    scored = parsed_beats[int(intro_skip) : len(parsed_beats) - int(outro_skip)]
+    with st.spinner(f"Rendering click preview ({len(scored)} clicks)…"):
         y, sr = load_audio(audio_path)
-        wav = click_preview_bytes(y, sr, parsed_beats)
+        wav = click_preview_bytes(y, sr, scored)
+    st.caption(
+        f"Clicks on beats {int(intro_skip) + 1}–{len(parsed_beats) - int(outro_skip)} "
+        f"of {len(parsed_beats)} (intro skip {int(intro_skip)}, outro skip {int(outro_skip)})."
+    )
     st.audio(wav, format="audio/wav")
 
 # ─── Save ────────────────────────────────────────────────────────────────────
