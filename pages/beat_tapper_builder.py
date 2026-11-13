@@ -6,8 +6,10 @@ HTML page (`beat_tapper_html/beat_tapper.html`, copied from
 
 Per song, three files live in `beat_tapper_html/library/`:
     {slug}.mp3    original audio (so we can re-load it for curation)
-    {slug}.json   editable source of truth: title, beats, intro/outro skip, notes
+    {slug}.json   editable source of truth: title, BASE beats, intro/outro skip,
+                  double_time flag, notes
     {slug}.js     generated: calls window.CK_LOAD(slug, {...}) with base64 audio
+                  and the EFFECTIVE beats (BASE doubled if double_time is on)
 And one shared file:
     index.js      window.CK_SONGS = [{slug, title, bpm, beats_count, duration, notes}, ...]
 
@@ -83,6 +85,22 @@ def format_beats_text(beats: list[float]) -> str:
     return "\n".join(f"{t:.4f}" for t in beats)
 
 
+def apply_double_time(beats: list[float]) -> list[float]:
+    """Insert a midpoint between every consecutive pair. N → 2N-1.
+
+    Fixes songs where librosa latches onto a half-time pulse (e.g. two-step
+    tracked slow-slow instead of quick-quick-slow-slow).
+    """
+    if len(beats) < 2:
+        return list(beats)
+    out: list[float] = []
+    for i in range(len(beats) - 1):
+        out.append(beats[i])
+        out.append((beats[i] + beats[i + 1]) / 2.0)
+    out.append(beats[-1])
+    return out
+
+
 def _audio_cache_key(mp3_path: Path) -> str:
     st_ = mp3_path.stat()
     return f"{mp3_path.resolve()}::{st_.st_mtime_ns}::{st_.st_size}"
@@ -105,18 +123,59 @@ def detect_beats(y: np.ndarray, sr: int) -> tuple[float, list[float]]:
     return bpm, beats
 
 
-def click_preview_bytes(y: np.ndarray, sr: int, beats: list[float]) -> bytes:
-    """Return a WAV byte string of y + click track at `beats`."""
-    if not beats:
+def click_preview_bytes(
+    y: np.ndarray,
+    sr: int,
+    beats: list[float],
+    downbeats: list[float] | None = None,
+) -> bytes:
+    """Return a WAV byte string of y + click track at `beats`.
+
+    If `downbeats` is given, those times get a higher-pitched, louder click
+    so you can hear the phrase structure. `downbeats` should be a subset of
+    `beats`; it's removed from the regular click list to avoid double clicks.
+    """
+    db_set = set(downbeats or [])
+    regular = [t for t in beats if t not in db_set]
+    layers = []
+    if regular:
+        layers.append(0.5 * librosa.clicks(
+            times=np.asarray(regular), sr=sr, length=len(y), click_freq=1000.0,
+        ))
+    if downbeats:
+        layers.append(0.65 * librosa.clicks(
+            times=np.asarray(downbeats), sr=sr, length=len(y), click_freq=1700.0,
+        ))
+    if not layers:
         mix = y
     else:
-        clicks = librosa.clicks(times=np.asarray(beats), sr=sr, length=len(y))
-        mix = 0.6 * y + 0.5 * clicks
+        mix = 0.6 * y
+        for layer in layers:
+            mix = mix + layer
         mix = mix / max(1e-9, float(np.max(np.abs(mix))))
     import io
     buf = io.BytesIO()
     sf.write(buf, mix, sr, format="WAV", subtype="PCM_16")
     return buf.getvalue()
+
+
+def downbeat_indices(
+    n_effective: int,
+    intro_skip: int,
+    outro_skip: int,
+    period: int,
+    offset: int,
+) -> list[int]:
+    """Indices into the full effective-beats list that are downbeats.
+
+    The first downbeat sits `offset` beats after `intro_skip`; subsequent
+    downbeats are spaced `period` beats apart; none fall inside the outro.
+    """
+    if period < 1 or n_effective <= 0:
+        return []
+    start = int(intro_skip) + int(offset)
+    end = n_effective - int(outro_skip)
+    return list(range(start, end, int(period)))
 
 
 # ─── library I/O ─────────────────────────────────────────────────────────────
@@ -153,38 +212,56 @@ def save_song(
     intro_skip: int,
     outro_skip: int,
     notes: str,
+    double_time: bool = False,
+    downbeat_period: int = 8,
+    downbeat_offset: int = 0,
 ) -> None:
-    """Writes {slug}.mp3 (if new), {slug}.json, {slug}.js, and regenerates index.js."""
+    """Writes {slug}.mp3 (if new), {slug}.json, {slug}.js, and regenerates index.js.
+
+    `beats` is the BASE beat list (as shown in the textarea). The generated
+    {slug}.js receives the EFFECTIVE list (doubled when double_time is True)
+    so the player doesn't need to know about the flag. Downbeat period and
+    offset are stored as-is; both the player and recorder derive the actual
+    downbeat indices from them at load time.
+    """
     LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
     ext = source_audio.suffix.lower()
     audio_dest = LIBRARY_DIR / f"{slug}{ext}"
     if source_audio.resolve() != audio_dest.resolve():
         shutil.copyfile(source_audio, audio_dest)
 
+    base_beats = [round(t, 4) for t in beats]
+    effective_beats = apply_double_time(base_beats) if double_time else base_beats
+
     record = {
-        "slug":        slug,
-        "title":       title,
-        "bpm":         round(bpm, 2),
-        "duration":    round(duration, 3),
-        "intro_skip":  int(intro_skip),
-        "outro_skip":  int(outro_skip),
-        "notes":       notes,
-        "beats":       [round(t, 4) for t in beats],
-        "audio_ext":   ext,
+        "slug":            slug,
+        "title":           title,
+        "bpm":             round(bpm, 2),
+        "duration":        round(duration, 3),
+        "intro_skip":      int(intro_skip),
+        "outro_skip":      int(outro_skip),
+        "double_time":     bool(double_time),
+        "downbeat_period": int(downbeat_period),
+        "downbeat_offset": int(downbeat_offset),
+        "notes":           notes,
+        "beats":           base_beats,
+        "audio_ext":       ext,
     }
     (LIBRARY_DIR / f"{slug}.json").write_text(json.dumps(record, indent=2))
 
     audio_b64 = base64.b64encode(audio_dest.read_bytes()).decode("ascii")
     js_payload = {
-        "title":       title,
-        "bpm":         record["bpm"],
-        "duration":    record["duration"],
-        "beats":       record["beats"],
-        "intro_skip":  record["intro_skip"],
-        "outro_skip":  record["outro_skip"],
-        "notes":       notes,
-        "audio_mime":  guess_mime(audio_dest),
-        "audio_b64":   audio_b64,
+        "title":           title,
+        "bpm":             record["bpm"],
+        "duration":        record["duration"],
+        "beats":           effective_beats,
+        "intro_skip":      record["intro_skip"],
+        "outro_skip":      record["outro_skip"],
+        "downbeat_period": record["downbeat_period"],
+        "downbeat_offset": record["downbeat_offset"],
+        "notes":           notes,
+        "audio_mime":      guess_mime(audio_dest),
+        "audio_b64":       audio_b64,
     }
     js_literal = json.dumps(js_payload)
     js_text = (
@@ -202,12 +279,14 @@ def rebuild_index() -> None:
         rec = load_song_record(slug)
         if not rec:
             continue
+        base = rec["beats"]
+        effective = apply_double_time(base) if rec.get("double_time") else base
         entries.append({
             "slug":        rec["slug"],
             "title":       rec["title"],
             "bpm":         rec["bpm"],
             "duration":    rec["duration"],
-            "beats_count": len(rec["beats"]),
+            "beats_count": len(effective),
             "notes":       rec.get("notes", ""),
         })
     # Sort by title (case-insensitive)
@@ -378,19 +457,52 @@ st.caption(f"Slug: `{slug}` — this becomes the library file stem.")
 col_i, col_o = st.columns(2)
 default_intro = (record and record.get("intro_skip", 0)) or 0
 default_outro = (record and record.get("outro_skip", 0)) or 0
+# Generous cap: covers the double-time case (2N-1) and a bit of manual slack.
+skip_cap = max(1, 2 * len(sess["beats"]) - 1)
 intro_skip = col_i.number_input(
     "Intro beats to skip",
-    min_value=0, max_value=max(1, len(sess["beats"]) - 1),
+    min_value=0, max_value=skip_cap,
     value=int(default_intro), step=1,
-    help=("The first N detected beats won't be scored. Useful for tracks with "
-          "a metered intro, drum fill, or pickup beats."),
+    help=("The first N effective beats won't be scored. Useful for tracks "
+          "with a metered intro, drum fill, or pickup beats."),
 )
 outro_skip = col_o.number_input(
     "Outro beats to skip",
-    min_value=0, max_value=max(1, len(sess["beats"]) - 1),
+    min_value=0, max_value=skip_cap,
     value=int(default_outro), step=1,
-    help="The last N detected beats won't be scored (ritard, fade-out, etc.).",
+    help="The last N effective beats won't be scored (ritard, fade-out, etc.).",
 )
+default_double = bool(record.get("double_time", False)) if record else False
+double_time = st.checkbox(
+    "Double-time (insert midpoint between each consecutive pair of beats)",
+    value=default_double,
+    key=f"bt_double::{audio_path.resolve()}",
+    help=("Toggle when librosa latches onto a half-time pulse — e.g. a "
+          "two-step tracked slow-slow instead of quick-quick-slow-slow. "
+          "The textarea still shows the base beats; the player and preview "
+          "use the doubled series. Persists in the saved record."),
+)
+
+col_dp, col_do = st.columns(2)
+default_period = int(record.get("downbeat_period", 8)) if record else 8
+default_offset = int(record.get("downbeat_offset", 0)) if record else 0
+downbeat_period = col_dp.number_input(
+    "Downbeat period",
+    min_value=1, max_value=64,
+    value=max(1, default_period), step=1,
+    help=("Every Nth effective beat (after intro skip) is a downbeat. "
+          "8 suits most 32-count line dances; use 4 for quick phrases or "
+          "16/32 for longer ones."),
+)
+downbeat_offset = col_do.number_input(
+    "Downbeat offset",
+    min_value=0, max_value=max(0, int(downbeat_period) - 1),
+    value=min(default_offset, max(0, int(downbeat_period) - 1)), step=1,
+    help=("Which effective beat (after intro skip) is the FIRST downbeat. "
+          "0 means the first non-intro beat is the downbeat, which is "
+          "almost always right."),
+)
+
 notes_val = st.text_area(
     "Notes (free-form; shown as a caption in the song picker)",
     value=(record and record.get("notes", "")) or "",
@@ -400,10 +512,17 @@ notes_val = st.text_area(
 # ─── Beats curator ───────────────────────────────────────────────────────────
 
 st.subheader("Beats curator")
-c1, c2, c3 = st.columns(3)
-c1.metric("Tempo",    f"{sess['bpm']:.1f} BPM")
-c2.metric("Beats",    f"{len(sess['beats'])}")
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("Tempo",    f"{sess['bpm']:.1f} BPM" + (" ×2" if double_time else ""))
+c2.metric("Beats (detected base)", f"{len(sess['beats'])}")
 c3.metric("Duration", f"{sess['duration']:.1f} s")
+_effective_count = len(apply_double_time(sess["beats"])) if double_time else len(sess["beats"])
+_db_count = len(downbeat_indices(
+    _effective_count, int(intro_skip), int(outro_skip),
+    int(downbeat_period), int(downbeat_offset),
+))
+c4.metric("Downbeats", f"{_db_count}",
+          help=f"every {int(downbeat_period)} effective beats starting at offset {int(downbeat_offset)}")
 
 st.caption(
     "One beat timestamp per line, in seconds. Edit, add, or remove lines to "
@@ -429,10 +548,17 @@ beats_text = st.text_area(
     height=260,
 )
 parsed_beats, parse_errors = parse_beats_text(beats_text)
+effective_beats = apply_double_time(parsed_beats) if double_time else parsed_beats
 if parse_errors:
     st.warning("Parse issues — fix before saving:\n\n" + "\n".join(f"- {e}" for e in parse_errors))
 else:
-    st.caption(f"✔ parsed {len(parsed_beats)} beats")
+    if double_time:
+        st.caption(
+            f"✔ parsed {len(parsed_beats)} base beats → "
+            f"**{len(effective_beats)} effective beats** (double-time on)"
+        )
+    else:
+        st.caption(f"✔ parsed {len(parsed_beats)} beats")
 
 tool_cols = st.columns(4)
 if tool_cols[0].button("Re-detect from audio (overwrites)"):
@@ -452,15 +578,24 @@ if tool_cols[2].button("Apply nudge"):
         st.rerun()
 
 if tool_cols[3].button("Preview with audible clicks", disabled=bool(parse_errors)):
-    # Click only the beats that will actually be scored — skipping intro/outro
-    # so the preview matches what the player will do.
-    scored = parsed_beats[int(intro_skip) : len(parsed_beats) - int(outro_skip)]
-    with st.spinner(f"Rendering click preview ({len(scored)} clicks)…"):
+    # Click only the EFFECTIVE beats that will actually be scored — doubled
+    # if the flag is on, then with intro/outro slices applied, so the preview
+    # matches what the player will do. Downbeats get a higher-pitched click.
+    scored = effective_beats[int(intro_skip) : len(effective_beats) - int(outro_skip)]
+    db_idxs = downbeat_indices(
+        len(effective_beats), int(intro_skip), int(outro_skip),
+        int(downbeat_period), int(downbeat_offset),
+    )
+    db_times = [effective_beats[i] for i in db_idxs]
+    with st.spinner(f"Rendering click preview ({len(scored)} clicks, {len(db_times)} downbeats)…"):
         y, sr = load_audio(audio_path)
-        wav = click_preview_bytes(y, sr, scored)
+        wav = click_preview_bytes(y, sr, scored, downbeats=db_times)
+    dt_note = " (double-time on)" if double_time else ""
     st.caption(
-        f"Clicks on beats {int(intro_skip) + 1}–{len(parsed_beats) - int(outro_skip)} "
-        f"of {len(parsed_beats)} (intro skip {int(intro_skip)}, outro skip {int(outro_skip)})."
+        f"Clicks on beats {int(intro_skip) + 1}–{len(effective_beats) - int(outro_skip)} "
+        f"of {len(effective_beats)} effective"
+        f"{dt_note} (intro skip {int(intro_skip)}, outro skip {int(outro_skip)}). "
+        f"Downbeats: {len(db_times)} (higher-pitched clicks)."
     )
     st.audio(wav, format="audio/wav")
 
@@ -574,10 +709,20 @@ if st.button("Save to library", type="primary", disabled=not can_save):
         intro_skip=int(intro_skip),
         outro_skip=int(outro_skip),
         notes=notes_val.strip(),
+        double_time=bool(double_time),
+        downbeat_period=int(downbeat_period),
+        downbeat_offset=int(downbeat_offset),
     )
+    eff_count = len(apply_double_time(parsed_beats)) if double_time else len(parsed_beats)
+    db_saved = len(downbeat_indices(
+        eff_count, int(intro_skip), int(outro_skip),
+        int(downbeat_period), int(downbeat_offset),
+    ))
     st.success(
-        f"Saved `{slug}` ({len(parsed_beats)} beats, intro skip {intro_skip}, "
-        f"outro skip {outro_skip})."
+        f"Saved `{slug}` ({len(parsed_beats)} base → {eff_count} effective beats, "
+        f"intro skip {intro_skip}, outro skip {outro_skip}"
+        f"{', double-time ON' if double_time else ''}, "
+        f"{db_saved} downbeats every {int(downbeat_period)})."
     )
     st.code(f"open '{PLAYER_DEST.resolve()}'", language="bash")
     st.caption(

@@ -79,11 +79,21 @@
     width: 2px; height: 30px;
     background: #64748b;
   }
+  .tl-beat.downbeat {
+    top: 5px; width: 4px; height: 50px;
+    background: #67e8f9;
+    box-shadow: 0 0 10px rgba(103,232,249,0.6);
+  }
   .tl-tap {
     position: absolute; bottom: 10px;
     width: 10px; height: 10px; border-radius: 50%;
     background: #fde68a; box-shadow: 0 0 12px #fde68a;
     transform: translateX(-50%);
+  }
+  .tl-tap.downbeat {
+    width: 14px; height: 14px;
+    background: #67e8f9; box-shadow: 0 0 14px #67e8f9;
+    bottom: 8px;
   }
 
   #r_time {
@@ -120,6 +130,7 @@
 
   #r_hint { color: #94a3b8; font-size: 15px; margin-top: 20px; text-align: center; }
   #r_hint b { color: #fde68a; }
+  #r_hint .db { color: #67e8f9; font-weight: 700; }
 
   #r_controls { margin-top: 30px; display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
   .btn {
@@ -192,12 +203,16 @@
   <div id="r_time">0:00.00</div>
   <div id="r_progress"><div id="r_progress_fill"></div></div>
 
-  <div id="r_counter"><span id="r_tapcount">0</span><span class="lbl">taps recorded</span></div>
+  <div id="r_counter">
+    <span id="r_tapcount">0</span><span class="lbl">beats</span>
+    <span id="r_dbcount" style="margin-left:18px;color:#67e8f9">0</span><span class="lbl">downbeats</span>
+  </div>
 
   <div id="r_flash"></div>
 
   <div id="r_hint">
-    Press <b>SPACE</b> · click · or touch the screen on each beat you want to mark.
+    <b>SPACE</b> · click · touch on each beat &nbsp;·&nbsp;
+    <span class="db">SHIFT</span> · right-click on each <span class="db">downbeat</span>.
   </div>
 
   <div id="r_controls">
@@ -249,10 +264,11 @@ const flashEl    = document.getElementById("r_flash");
 
 // ─── State ───────────────────────────────────────────────────────────────────
 let currentSong = null;
-let taps = [];          // audio.currentTime of each recorded tap (seconds)
+let taps = [];          // {t, isDownbeat} per recorded tap
 let recording = false;  // true while audio is playing and we're accepting taps
 let rafToken = null;
 let beatTickEls = [];   // reused DOM nodes for detected beats on the timeline
+let downbeatIdxSet = null;  // Set<number> indices into currentSong.beats that are downbeats
 let tapTickEls  = [];   // one per tap on the timeline
 
 // ─── Picker ──────────────────────────────────────────────────────────────────
@@ -294,10 +310,21 @@ window.CK_LOAD = function(slug, data) {
   recorder.style.display = "flex";
 
   audio.src = "data:" + data.audio_mime + ";base64," + data.audio_b64;
+
+  // Downbeat indices into data.beats (effective), honoring intro/outro and period/offset.
+  const period = Math.max(1, data.downbeat_period || 8);
+  const offset = Math.max(0, Math.min(period - 1, data.downbeat_offset || 0));
+  const skipStart = data.intro_skip || 0;
+  const skipEnd   = data.outro_skip || 0;
+  downbeatIdxSet = new Set();
+  for (let i = skipStart + offset; i < data.beats.length - skipEnd; i += period) {
+    downbeatIdxSet.add(i);
+  }
+
   document.getElementById("r_title").textContent = data.title;
   document.getElementById("r_meta").textContent =
     Math.round(data.bpm) + " BPM · " + data.beats.length + " detected beats · " +
-    data.duration.toFixed(1) + "s";
+    downbeatIdxSet.size + " downbeats · " + data.duration.toFixed(1) + "s";
 
   // Reset state
   taps = [];
@@ -306,9 +333,10 @@ window.CK_LOAD = function(slug, data) {
   showStartControls();
   // Pre-create beat ticks (one per detected beat) — positioned each frame.
   timeline.querySelectorAll(".tl-beat, .tl-tap").forEach(n => n.remove());
-  beatTickEls = data.beats.map(() => {
+  beatTickEls = data.beats.map((_, i) => {
     const el = document.createElement("div");
     el.className = "tl-beat";
+    if (downbeatIdxSet.has(i)) el.classList.add("downbeat");
     el.style.display = "none";
     timeline.appendChild(el);
     return el;
@@ -342,15 +370,15 @@ function renderFrame() {
 
   // Recorded taps
   for (let i = 0; i < taps.length; i++) {
-    const t = taps[i];
+    const tap = taps[i];
     let el = tapTickEls[i];
     if (!el) {
       el = document.createElement("div");
-      el.className = "tl-tap";
+      el.className = "tl-tap" + (tap.isDownbeat ? " downbeat" : "");
       timeline.appendChild(el);
       tapTickEls[i] = el;
     }
-    const dx = (t - now) * pxPerSec;
+    const dx = (tap.t - now) * pxPerSec;
     if (dx < -centerX - 10 || dx > centerX + 10) {
       if (el.style.display !== "none") el.style.display = "none";
     } else {
@@ -380,6 +408,7 @@ function startRecording() {
   if (!currentSong) return;
   audio.currentTime = 0;
   taps = [];
+  lastRecTapAt = -Infinity;
   tapTickEls.forEach(el => el.remove());
   tapTickEls = [];
   updateCounter();
@@ -415,14 +444,21 @@ function clearTaps() {
   updateCounter();
 }
 
-function tap() {
+let lastRecTapAt = -Infinity;
+function tap(isDownbeat) {
   if (!recording) return;
   const t = audio.currentTime;
-  taps.push(t);
+  // Dedup chorded Space+Shift so we don't double-record.
+  if (t - lastRecTapAt < 0.04) return;
+  lastRecTapAt = t;
+  taps.push({ t, isDownbeat: !!isDownbeat });
   updateCounter();
-  // Pulse flash at pointer / center
+  // Pulse flash at pointer / center; cyan for downbeats
   flashEl.style.left = (window.innerWidth / 2 - 90) + "px";
   flashEl.style.top  = (window.innerHeight / 2 - 90) + "px";
+  flashEl.style.background = isDownbeat
+    ? "radial-gradient(circle, rgba(103,232,249,0.85) 0%, transparent 70%)"
+    : "radial-gradient(circle, rgba(253,230,138,0.8) 0%, transparent 70%)";
   flashEl.style.opacity = 1;
   flashEl.style.transform = "scale(1)";
   clearTimeout(window._fT);
@@ -433,7 +469,10 @@ function tap() {
 }
 
 function updateCounter() {
-  document.getElementById("r_tapcount").textContent = taps.length;
+  const beatCount = taps.filter(x => !x.isDownbeat).length;
+  const dbCount   = taps.length - beatCount;
+  document.getElementById("r_tapcount").textContent = beatCount;
+  document.getElementById("r_dbcount").textContent  = dbCount;
 }
 
 function showStartControls() {
@@ -482,13 +521,23 @@ function computeRegions(sortedTaps) {
   }));
 }
 
+function sortedTapTimes() {
+  return taps.map(x => x.t).slice().sort((a, b) => a - b);
+}
+function sortedDownbeatTimes() {
+  return taps.filter(x => x.isDownbeat).map(x => x.t).sort((a, b) => a - b);
+}
+
 function showDone() {
   recorder.style.display = "none";
   doneScreen.style.display = "flex";
 
-  const sorted = taps.slice().sort((a, b) => a - b);
+  const sorted = sortedTapTimes();
+  const dbSorted = sortedDownbeatTimes();
   const regions = computeRegions(sorted);
-  document.getElementById("d_count").textContent = sorted.length;
+  const beatCount = sorted.length - dbSorted.length;
+  document.getElementById("d_count").textContent =
+    beatCount + " beats · " + dbSorted.length + " downbeats";
   document.getElementById("d_regions").textContent = regions.length;
   if (sorted.length >= 2) {
     document.getElementById("d_span").textContent =
@@ -521,13 +570,15 @@ function showDone() {
 }
 
 function downloadTaps() {
-  const sorted = taps.slice().sort((a, b) => a - b);
+  const sorted = sortedTapTimes();
+  const dbSorted = sortedDownbeatTimes();
   const payload = {
     slug: currentSong.slug,
     song_title: currentSong.title,
     song_duration: currentSong.duration,
     recorded_at: new Date().toISOString(),
-    all_taps: sorted.map(t => Math.round(t * 10000) / 10000),
+    all_taps:      sorted  .map(t => Math.round(t * 10000) / 10000),
+    downbeat_taps: dbSorted.map(t => Math.round(t * 10000) / 10000),
     regions: computeRegions(sorted).map(r => ({
       start: Math.round(r.start * 10000) / 10000,
       end:   Math.round(r.end   * 10000) / 10000,
@@ -581,12 +632,18 @@ audio.addEventListener("ended", () => {
 });
 
 document.addEventListener("keydown", (e) => {
-  if (e.code === "Space") { e.preventDefault(); tap(); }
+  if (e.repeat) return;
+  if (e.code === "Space") { e.preventDefault(); tap(false); }
+  else if (e.code === "ShiftLeft" || e.code === "ShiftRight" || e.code === "Enter") {
+    e.preventDefault();
+    tap(true);
+  }
 });
 recorder.addEventListener("pointerdown", (e) => {
   if (e.target.tagName === "BUTTON") return;
-  tap();
+  tap(e.button === 2 || e.shiftKey);
 });
+recorder.addEventListener("contextmenu", (e) => { e.preventDefault(); });
 
 // ─── Load library index ──────────────────────────────────────────────────────
 (function() {

@@ -79,9 +79,26 @@
     will-change: transform;
     display: none;
   }
+  .note.downbeat {
+    left: -10px;
+    width: 240px; height: 58px;
+    border-radius: 32px;
+    background: radial-gradient(circle at 30% 30%, #67e8f9, #0891b2);
+    box-shadow: 0 0 35px rgba(103,232,249,0.85), inset 0 0 0 3px rgba(255,255,255,0.2);
+  }
+  .note.downbeat::after {
+    content: "1";
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    color: rgba(255,255,255,0.9); font-weight: 900; font-size: 24px;
+    text-shadow: 0 2px 6px rgba(0,0,0,0.5);
+  }
   .note.perfect { background: radial-gradient(circle at 30% 30%, #86efac, #16a34a); box-shadow: 0 0 25px rgba(34,197,94,0.8); }
   .note.good    { background: radial-gradient(circle at 30% 30%, #fde68a, #ca8a04); box-shadow: 0 0 25px rgba(234,179,8,0.8); }
   .note.miss    { background: radial-gradient(circle at 30% 30%, #94a3b8, #475569); box-shadow: none; opacity: 0.35; }
+  .note.downbeat.perfect { background: radial-gradient(circle at 30% 30%, #86efac, #16a34a); box-shadow: 0 0 35px rgba(34,197,94,0.9), inset 0 0 0 3px rgba(255,255,255,0.3); }
+  .note.downbeat.good    { background: radial-gradient(circle at 30% 30%, #fde68a, #ca8a04); box-shadow: 0 0 35px rgba(234,179,8,0.9), inset 0 0 0 3px rgba(255,255,255,0.3); }
+  .note.downbeat.miss    { background: radial-gradient(circle at 30% 30%, #94a3b8, #475569); box-shadow: inset 0 0 0 3px rgba(255,255,255,0.1); opacity: 0.35; }
 
   #hitline {
     position: absolute; left: 0; right: 0;
@@ -174,13 +191,17 @@
     <div><span class="lbl">Good</span><span class="v" id="s_good">0</span></div>
     <div><span class="lbl">Miss</span><span class="v" id="s_miss">0</span></div>
     <div><span class="lbl">Accuracy</span><span class="v" id="s_acc">—</span></div>
+    <div><span class="lbl">Downbeats</span><span class="v" id="s_db">—</span></div>
   </div>
 
   <div id="info">
     <h1 id="i_title"></h1>
     <div id="i_meta"></div>
     <div id="i_skip" class="skipnote" style="display:none"></div>
-    <div class="hint">Tap <b>SPACE</b> · click · or touch<br>on each beat as it reaches the line</div>
+    <div class="hint">
+      Tap <b>SPACE</b> · click · or touch on any beat.<br>
+      Hit <b>SHIFT</b> (or right-click) on the cyan <b>downbeats</b>.
+    </div>
   </div>
 
   <div id="feedback"></div>
@@ -196,6 +217,8 @@
     <div class="row"><span class="lbl">Accuracy</span><span class="v"><span id="f_acc">0</span>%</span></div>
     <div class="row"><span class="lbl">Mean error</span><span class="v"><span id="f_err">0</span> ms</span></div>
     <div class="row"><span class="lbl">Timing</span><span class="v" id="f_bias">—</span></div>
+    <div class="row"><span class="lbl">Downbeats</span><span class="v" id="f_db">—</span></div>
+    <div class="row"><span class="lbl">Downbeat acc.</span><span class="v" id="f_db_acc">—</span></div>
     <div class="btnrow">
       <button onclick="window.CK.playAgain()">Play Again</button>
       <button class="secondary" onclick="window.CK.returnToPicker()">Back to Picker</button>
@@ -230,9 +253,12 @@ const backBtn  = document.getElementById("back-to-picker");
 // ─── Game state ──────────────────────────────────────────────────────────────
 let currentSong = null;         // {title, beats, intro_skip, outro_skip, ...}
 let activeBeats = [];           // beats slice we actually score against
-let notes = [];                 // {t, el, used}
+let downbeatSet = null;         // Set<number> of indices into activeBeats that are downbeats
+let notes = [];                 // {t, el, used, isDownbeat}
 let errors = [];                // signed tap errors (sec, + = late)
 let state  = { perfect: 0, good: 0, miss: 0, score: 0, combo: 0, maxCombo: 0 };
+let dbState = { hit: 0, missedAsBeat: 0, miss: 0, total: 0 };
+let lastTapAt = -Infinity;  // dedup window — see tap()
 let hitY = 0;
 let finished = false;
 let started  = false;
@@ -288,16 +314,22 @@ window.CK_LOAD = function(slug, data) {
   const skipEnd   = data.outro_skip || 0;
   activeBeats = data.beats.slice(skipStart, data.beats.length - skipEnd);
 
+  // Downbeats: period/offset are relative to the first active beat
+  // (i.e. the first non-intro effective beat). Offset 0 = first active beat is a downbeat.
+  const period = Math.max(1, data.downbeat_period || 8);
+  const offset = Math.max(0, Math.min(period - 1, data.downbeat_offset || 0));
+  downbeatSet = new Set();
+  for (let i = offset; i < activeBeats.length; i += period) downbeatSet.add(i);
+  dbState.total = downbeatSet.size;
+
   const skipDiv = document.getElementById("i_skip");
-  if (skipStart || skipEnd) {
-    const parts = [];
-    if (skipStart) parts.push(skipStart + " intro beat" + (skipStart === 1 ? "" : "s") + " skipped");
-    if (skipEnd)   parts.push(skipEnd + " outro beat" + (skipEnd === 1 ? "" : "s") + " skipped");
-    skipDiv.textContent = parts.join(" · ");
-    skipDiv.style.display = "block";
-  } else {
-    skipDiv.style.display = "none";
-  }
+  const parts = [];
+  if (skipStart) parts.push(skipStart + " intro beat" + (skipStart === 1 ? "" : "s") + " skipped");
+  if (skipEnd)   parts.push(skipEnd + " outro beat" + (skipEnd === 1 ? "" : "s") + " skipped");
+  parts.push(dbState.total + " downbeat" + (dbState.total === 1 ? "" : "s") +
+             " · every " + period + (offset ? " from offset " + offset : ""));
+  skipDiv.textContent = parts.join(" · ");
+  skipDiv.style.display = "block";
 
   resetGameState();
   summary.style.display = "none";
@@ -308,6 +340,8 @@ window.CK_LOAD = function(slug, data) {
 function resetGameState() {
   notes = []; errors = [];
   state = { perfect: 0, good: 0, miss: 0, score: 0, combo: 0, maxCombo: 0 };
+  dbState = { hit: 0, missedAsBeat: 0, miss: 0, total: downbeatSet ? downbeatSet.size : 0 };
+  lastTapAt = -Infinity;
   finished = false; started = false;
   runway.innerHTML = "";
   updateHUD();
@@ -321,11 +355,13 @@ function layout() {
 
 function buildNotes() {
   runway.innerHTML = "";
-  notes = activeBeats.map(t => {
+  notes = activeBeats.map((t, i) => {
     const el = document.createElement("div");
     el.className = "note";
+    const isDownbeat = downbeatSet && downbeatSet.has(i);
+    if (isDownbeat) el.classList.add("downbeat");
     runway.appendChild(el);
-    return { t, el, used: false };
+    return { t, el, used: false, isDownbeat };
   });
 }
 
@@ -351,9 +387,13 @@ function render() {
   requestAnimationFrame(render);
 }
 
-function tap() {
+function tap(isDownbeatKey) {
   if (finished || !started) return;
   const now = audio.currentTime;
+  // Dedup: if Space and Shift fire within a few ms (natural chord-pressing),
+  // ignore the second so it doesn't miss the next beat.
+  if (now - lastTapAt < 0.04) return;
+  lastTapAt = now;
   let best = null, bestAbs = Infinity;
   for (const n of notes) {
     if (n.used) continue;
@@ -373,16 +413,35 @@ function tap() {
   best.used = true;
   state.combo++;
   if (state.combo > state.maxCombo) state.maxCombo = state.combo;
-  if (bestAbs < PERFECT) {
-    best.el.classList.add("perfect");
+
+  const quality = bestAbs < PERFECT ? "perfect" : "good";
+  best.el.classList.add(quality);
+  if (quality === "perfect") {
     state.perfect++;
     state.score += 100 + Math.min(state.combo, 20) * 2;
-    flash("Perfect!", "#86efac", 56);
   } else {
-    best.el.classList.add("good");
     state.good++;
     state.score += 50;
-    flash("Good", "#fde68a", 44);
+  }
+
+  if (best.isDownbeat) {
+    if (isDownbeatKey) {
+      dbState.hit++;
+      state.score += 50;  // downbeat bonus
+      flash(quality === "perfect" ? "Downbeat!" : "Downbeat",
+            "#67e8f9", quality === "perfect" ? 60 : 50);
+    } else {
+      // Beat hit, but downbeat not identified
+      dbState.missedAsBeat++;
+      flash(quality === "perfect" ? "Perfect!" : "Good",
+            quality === "perfect" ? "#86efac" : "#fde68a",
+            quality === "perfect" ? 56 : 44);
+    }
+  } else {
+    // Regular beat; SHIFT and SPACE score identically
+    flash(quality === "perfect" ? "Perfect!" : "Good",
+          quality === "perfect" ? "#86efac" : "#fde68a",
+          quality === "perfect" ? 56 : 44);
   }
   updateHUD();
 }
@@ -392,6 +451,7 @@ function autoMiss(n) {
   n.el.classList.add("miss");
   state.miss++;
   state.combo = 0;
+  if (n.isDownbeat) dbState.miss++;
   updateHUD();
 }
 
@@ -416,12 +476,22 @@ function updateHUD() {
   const total = state.perfect + state.good + state.miss;
   const acc = total ? Math.round(100 * (state.perfect + state.good) / total) : 0;
   document.getElementById("s_acc").textContent = total ? (acc + "%") : "—";
+  const dbEl = document.getElementById("s_db");
+  if (dbState.total > 0) {
+    dbEl.textContent = dbState.hit + " / " + dbState.total;
+  } else {
+    dbEl.textContent = "—";
+  }
 }
 
 function finish() {
   if (finished) return;
   finished = true;
-  for (const n of notes) if (!n.used) { n.used = true; state.miss++; }
+  for (const n of notes) if (!n.used) {
+    n.used = true;
+    state.miss++;
+    if (n.isDownbeat) dbState.miss++;
+  }
   updateHUD();
 
   const total = state.perfect + state.good + state.miss;
@@ -447,6 +517,14 @@ function finish() {
   document.getElementById("f_acc").textContent     = acc.toFixed(1);
   document.getElementById("f_err").textContent     = errMs;
   document.getElementById("f_bias").textContent    = bias;
+  if (dbState.total > 0) {
+    const dbAcc = 100 * dbState.hit / dbState.total;
+    document.getElementById("f_db").textContent     = dbState.hit + " / " + dbState.total;
+    document.getElementById("f_db_acc").textContent = dbAcc.toFixed(1) + "%";
+  } else {
+    document.getElementById("f_db").textContent     = "—";
+    document.getElementById("f_db_acc").textContent = "—";
+  }
   summary.style.display = "block";
 }
 
@@ -489,15 +567,22 @@ backBtn.addEventListener("click", () => window.CK.returnToPicker());
 audio.addEventListener("ended", finish);
 
 document.addEventListener("keydown", (e) => {
+  if (e.repeat) return;
   if (e.code === "Space") {
     e.preventDefault();
-    if (started && !finished) tap();
+    if (started && !finished) tap(false);
+  } else if (e.code === "ShiftLeft" || e.code === "ShiftRight" || e.code === "Enter") {
+    e.preventDefault();
+    if (started && !finished) tap(true);
   }
 });
 game.addEventListener("pointerdown", (e) => {
   if (e.target.tagName === "BUTTON") return;
-  tap();
+  // Right-click (button 2) or shift-click → downbeat tap
+  tap(e.button === 2 || e.shiftKey);
 });
+// Suppress the default context menu inside the game so right-click can be used for downbeats.
+game.addEventListener("contextmenu", (e) => { e.preventDefault(); });
 
 // ─── Load library index ──────────────────────────────────────────────────────
 (function() {
