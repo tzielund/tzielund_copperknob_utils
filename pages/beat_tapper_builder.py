@@ -66,6 +66,24 @@ def guess_mime(path: str | Path) -> str:
     return MIME_BY_EXT.get(Path(path).suffix.lower(), "audio/mpeg")
 
 
+_SPOTIFY_TRACK_ID_RE = re.compile(r"(?:spotify:track:|open\.spotify\.com/track/|^)([A-Za-z0-9]{22})")
+
+def normalize_spotify_uri(raw: str) -> str:
+    """Return a `spotify:track:ID` URI, or '' if nothing recognizable.
+
+    Accepts any of:
+      spotify:track:5Jt4Mt2TI4t2T8w3Uc4Mn7
+      https://open.spotify.com/track/5Jt4Mt2TI4t2T8w3Uc4Mn7?si=abc
+      5Jt4Mt2TI4t2T8w3Uc4Mn7
+    """
+    if not raw:
+        return ""
+    m = _SPOTIFY_TRACK_ID_RE.search(raw.strip())
+    if not m:
+        return ""
+    return "spotify:track:" + m.group(1)
+
+
 def parse_beats_text(text: str) -> tuple[list[float], list[str]]:
     """Parse one-time-per-line beats text. Returns (beats_sorted, errors)."""
     beats: list[float] = []
@@ -127,24 +145,31 @@ def click_preview_bytes(
     y: np.ndarray,
     sr: int,
     beats: list[float],
-    downbeats: list[float] | None = None,
+    measures: list[float] | None = None,
+    phrases: list[float] | None = None,
 ) -> bytes:
-    """Return a WAV byte string of y + click track at `beats`.
+    """Return a WAV byte string of y + three-tier click track.
 
-    If `downbeats` is given, those times get a higher-pitched, louder click
-    so you can hear the phrase structure. `downbeats` should be a subset of
-    `beats`; it's removed from the regular click list to avoid double clicks.
+    Each list should be a subset of `beats`. Phrase clicks are highest-pitched
+    and loudest, measure clicks are a middle tier, regular beats are lowest.
+    The function removes overlaps so each time gets exactly one click at its
+    tier's volume + pitch.
     """
-    db_set = set(downbeats or [])
-    regular = [t for t in beats if t not in db_set]
+    phrase_set  = set(phrases  or [])
+    measure_set = set(measures or []) - phrase_set
+    regular     = [t for t in beats if t not in phrase_set and t not in measure_set]
     layers = []
     if regular:
         layers.append(0.5 * librosa.clicks(
             times=np.asarray(regular), sr=sr, length=len(y), click_freq=1000.0,
         ))
-    if downbeats:
-        layers.append(0.65 * librosa.clicks(
-            times=np.asarray(downbeats), sr=sr, length=len(y), click_freq=1700.0,
+    if measure_set:
+        layers.append(0.6 * librosa.clicks(
+            times=np.asarray(sorted(measure_set)), sr=sr, length=len(y), click_freq=1300.0,
+        ))
+    if phrase_set:
+        layers.append(0.75 * librosa.clicks(
+            times=np.asarray(sorted(phrase_set)), sr=sr, length=len(y), click_freq=1700.0,
         ))
     if not layers:
         mix = y
@@ -159,17 +184,18 @@ def click_preview_bytes(
     return buf.getvalue()
 
 
-def downbeat_indices(
+def period_indices(
     n_effective: int,
     intro_skip: int,
     outro_skip: int,
     period: int,
     offset: int,
 ) -> list[int]:
-    """Indices into the full effective-beats list that are downbeats.
+    """Indices into the full effective-beats list that land on the period.
 
-    The first downbeat sits `offset` beats after `intro_skip`; subsequent
-    downbeats are spaced `period` beats apart; none fall inside the outro.
+    The first index sits `offset` beats after `intro_skip`; subsequent indices
+    are spaced `period` beats apart; none fall inside the outro. Used for both
+    measure-1s and phrase-1s.
     """
     if period < 1 or n_effective <= 0:
         return []
@@ -213,16 +239,19 @@ def save_song(
     outro_skip: int,
     notes: str,
     double_time: bool = False,
-    downbeat_period: int = 8,
-    downbeat_offset: int = 0,
+    measure_period: int = 4,
+    phrase_period: int = 8,
+    phrase_offset: int = 0,
+    spotify_track_uri: str = "",
 ) -> None:
     """Writes {slug}.mp3 (if new), {slug}.json, {slug}.js, and regenerates index.js.
 
     `beats` is the BASE beat list (as shown in the textarea). The generated
     {slug}.js receives the EFFECTIVE list (doubled when double_time is True)
-    so the player doesn't need to know about the flag. Downbeat period and
-    offset are stored as-is; both the player and recorder derive the actual
-    downbeat indices from them at load time.
+    so the player doesn't need to know about the flag. Period/offset values
+    are stored as-is; the player and recorder derive the actual indices from
+    them at load time. Measures use the same offset as phrases, so the first
+    beat of each phrase is also the first beat of its measure.
     """
     LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
     ext = source_audio.suffix.lower()
@@ -234,34 +263,38 @@ def save_song(
     effective_beats = apply_double_time(base_beats) if double_time else base_beats
 
     record = {
-        "slug":            slug,
-        "title":           title,
-        "bpm":             round(bpm, 2),
-        "duration":        round(duration, 3),
-        "intro_skip":      int(intro_skip),
-        "outro_skip":      int(outro_skip),
-        "double_time":     bool(double_time),
-        "downbeat_period": int(downbeat_period),
-        "downbeat_offset": int(downbeat_offset),
-        "notes":           notes,
-        "beats":           base_beats,
-        "audio_ext":       ext,
+        "slug":              slug,
+        "title":             title,
+        "bpm":               round(bpm, 2),
+        "duration":          round(duration, 3),
+        "intro_skip":        int(intro_skip),
+        "outro_skip":        int(outro_skip),
+        "double_time":       bool(double_time),
+        "measure_period":    int(measure_period),
+        "phrase_period":     int(phrase_period),
+        "phrase_offset":     int(phrase_offset),
+        "spotify_track_uri": normalize_spotify_uri(spotify_track_uri),
+        "notes":             notes,
+        "beats":             base_beats,
+        "audio_ext":         ext,
     }
     (LIBRARY_DIR / f"{slug}.json").write_text(json.dumps(record, indent=2))
 
     audio_b64 = base64.b64encode(audio_dest.read_bytes()).decode("ascii")
     js_payload = {
-        "title":           title,
-        "bpm":             record["bpm"],
-        "duration":        record["duration"],
-        "beats":           effective_beats,
-        "intro_skip":      record["intro_skip"],
-        "outro_skip":      record["outro_skip"],
-        "downbeat_period": record["downbeat_period"],
-        "downbeat_offset": record["downbeat_offset"],
-        "notes":           notes,
-        "audio_mime":      guess_mime(audio_dest),
-        "audio_b64":       audio_b64,
+        "title":          title,
+        "bpm":            record["bpm"],
+        "duration":       record["duration"],
+        "beats":          effective_beats,
+        "intro_skip":     record["intro_skip"],
+        "outro_skip":     record["outro_skip"],
+        "measure_period": record["measure_period"],
+        "phrase_period":  record["phrase_period"],
+        "phrase_offset":  record["phrase_offset"],
+        "spotify_uri":    record["spotify_track_uri"],
+        "notes":          notes,
+        "audio_mime":     guess_mime(audio_dest),
+        "audio_b64":      audio_b64,
     }
     js_literal = json.dumps(js_payload)
     js_text = (
@@ -288,6 +321,7 @@ def rebuild_index() -> None:
             "duration":    rec["duration"],
             "beats_count": len(effective),
             "notes":       rec.get("notes", ""),
+            "has_spotify": bool(rec.get("spotify_track_uri", "")),
         })
     # Sort by title (case-insensitive)
     entries.sort(key=lambda e: e["title"].lower())
@@ -307,6 +341,77 @@ def _copy_if_stale(src: Path, dest: Path) -> None:
 def ensure_player() -> None:
     _copy_if_stale(PLAYER_SRC, PLAYER_DEST)
     _copy_if_stale(RECORDER_SRC, RECORDER_DEST)
+
+
+def build_phone_bundle(slugs: list[str]) -> tuple[Path, int]:
+    """Bundle the player + selected songs into one self-contained HTML.
+
+    Returns (output_path, size_bytes). The resulting file can be AirDropped,
+    emailed, or dropped into iCloud Drive; opening it on a phone loads
+    everything from a single document with no server or sidecar files.
+
+    Implementation: grabs each song's generated `.js` (which already contains
+    the base64 audio + effective beats) and injects them into the player's
+    HTML as a bundled bootstrap. The player checks `window.CK_BUNDLED` at
+    startup and skips its usual dynamic library/*.js load.
+    """
+    player_html = PLAYER_SRC.read_text()
+
+    entries = []
+    preload: dict[str, dict] = {}
+    for slug in slugs:
+        rec = load_song_record(slug)
+        if not rec:
+            continue
+        audio_src = find_audio_for(slug)
+        if not audio_src:
+            continue
+        base = rec["beats"]
+        effective = apply_double_time(base) if rec.get("double_time") else base
+        entries.append({
+            "slug":        rec["slug"],
+            "title":       rec["title"],
+            "bpm":         rec["bpm"],
+            "duration":    rec["duration"],
+            "beats_count": len(effective),
+            "notes":       rec.get("notes", ""),
+            "has_spotify": bool(rec.get("spotify_track_uri", "")),
+        })
+        audio_b64 = base64.b64encode(audio_src.read_bytes()).decode("ascii")
+        preload[slug] = {
+            "title":          rec["title"],
+            "bpm":            rec["bpm"],
+            "duration":       rec["duration"],
+            "beats":          effective,
+            "intro_skip":     rec.get("intro_skip", 0),
+            "outro_skip":     rec.get("outro_skip", 0),
+            "measure_period": rec.get("measure_period", 4),
+            "phrase_period":  rec.get("phrase_period", rec.get("downbeat_period", 8)),
+            "phrase_offset":  rec.get("phrase_offset", rec.get("downbeat_offset", 0)),
+            "spotify_uri":    rec.get("spotify_track_uri", ""),
+            "notes":          rec.get("notes", ""),
+            "audio_mime":     guess_mime(audio_src),
+            "audio_b64":      audio_b64,
+        }
+
+    entries.sort(key=lambda e: e["title"].lower())
+
+    bootstrap = (
+        "<script>\n"
+        "window.CK_BUNDLED = true;\n"
+        "window.CK_SONGS = " + json.dumps(entries) + ";\n"
+        "window.CK_PRELOAD = " + json.dumps(preload) + ";\n"
+        "</script>\n"
+    )
+    # Inject right after <body> so it runs before the main player script
+    # defines CK_LOAD — the init IIFE at the bottom will honor CK_BUNDLED.
+    if "<body>" not in player_html:
+        raise RuntimeError("Could not find <body> in player HTML.")
+    bundled = player_html.replace("<body>", "<body>\n" + bootstrap, 1)
+
+    out = OUTPUT_DIR / "beat_tapper_phone.html"
+    out.write_text(bundled)
+    return out, out.stat().st_size
 
 
 def merge_taps(detected: list[float], taps: list[float], proximity: float) -> tuple[list[float], int]:
@@ -362,6 +467,24 @@ if not PLAYER_SRC.exists():
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
 ensure_player()
+
+# ─── Links to the standalone HTML pages ──────────────────────────────────────
+# Browsers block file:// links from http://localhost pages, so we show the
+# URL plus a copy-paste `open` command. Both work on macOS; the URL is also
+# clickable if you paste it into the address bar.
+
+player_url   = PLAYER_DEST.resolve().as_uri()    # file:///...
+recorder_url = RECORDER_DEST.resolve().as_uri()
+
+L1, L2 = st.columns(2)
+with L1:
+    st.markdown(f"**[Open Player]({player_url})** — tap along to score yourself")
+    st.code(f"open '{PLAYER_DEST.resolve()}'", language="bash")
+with L2:
+    st.markdown(f"**[Open Recorder]({recorder_url})** — curate beats by tapping")
+    st.code(f"open '{RECORDER_DEST.resolve()}'", language="bash")
+
+st.divider()
 
 existing = library_slugs()
 mode = st.radio(
@@ -483,24 +606,35 @@ double_time = st.checkbox(
           "use the doubled series. Persists in the saved record."),
 )
 
-col_dp, col_do = st.columns(2)
-default_period = int(record.get("downbeat_period", 8)) if record else 8
-default_offset = int(record.get("downbeat_offset", 0)) if record else 0
-downbeat_period = col_dp.number_input(
-    "Downbeat period",
-    min_value=1, max_value=64,
-    value=max(1, default_period), step=1,
-    help=("Every Nth effective beat (after intro skip) is a downbeat. "
-          "8 suits most 32-count line dances; use 4 for quick phrases or "
-          "16/32 for longer ones."),
+col_mp, col_pp, col_po = st.columns(3)
+# Backward-compat: honor the old downbeat_period/offset field names if present.
+default_measure = int(record.get("measure_period", 4)) if record else 4
+default_phrase  = int(record.get("phrase_period",
+                                 record.get("downbeat_period", 8))) if record else 8
+default_phr_off = int(record.get("phrase_offset",
+                                 record.get("downbeat_offset", 0))) if record else 0
+measure_period = col_mp.number_input(
+    "Measure period",
+    min_value=1, max_value=16,
+    value=max(1, default_measure), step=1,
+    help=("Beats per measure. 4 for most 4/4 music, 3 for waltz, "
+          "2 for a two-step cell. Measure 1 gets a small accent in the "
+          "player and a medium click in the preview."),
 )
-downbeat_offset = col_do.number_input(
-    "Downbeat offset",
-    min_value=0, max_value=max(0, int(downbeat_period) - 1),
-    value=min(default_offset, max(0, int(downbeat_period) - 1)), step=1,
-    help=("Which effective beat (after intro skip) is the FIRST downbeat. "
-          "0 means the first non-intro beat is the downbeat, which is "
-          "almost always right."),
+phrase_period = col_pp.number_input(
+    "Phrase period",
+    min_value=1, max_value=64,
+    value=max(1, default_phrase), step=1,
+    help=("Beats per phrase (i.e. the dancer's '1'). 8 suits most "
+          "32-count line dances; 48 or 24 for waltz; 16/32 for long phrases."),
+)
+phrase_offset = col_po.number_input(
+    "Phrase offset",
+    min_value=0, max_value=max(0, int(phrase_period) - 1),
+    value=min(default_phr_off, max(0, int(phrase_period) - 1)), step=1,
+    help=("Which effective beat (after intro skip) is the FIRST phrase 1. "
+          "0 means the first non-intro beat is the phrase 1, which is "
+          "almost always right. Measures use the same offset."),
 )
 
 notes_val = st.text_area(
@@ -509,20 +643,41 @@ notes_val = st.text_area(
     height=80,
 )
 
+spotify_val_raw = st.text_input(
+    "Spotify track (URI, open.spotify.com URL, or 22-char ID)",
+    value=(record and record.get("spotify_track_uri", "")) or "",
+    placeholder="spotify:track:5Jt4Mt2TI4t2T8w3Uc4Mn7  (or paste a share link)",
+    help=("Optional. When set AND the player is signed in to Spotify Premium, "
+          "playback streams from Spotify instead of the bundled audio. Beat "
+          "timing is read from the Spotify SDK position; no new beat analysis "
+          "is needed."),
+)
+spotify_val = normalize_spotify_uri(spotify_val_raw)
+if spotify_val_raw and not spotify_val:
+    st.warning("Couldn't find a Spotify track ID in that string — leaving blank.")
+elif spotify_val:
+    st.caption(f"Normalized → `{spotify_val}`")
+
 # ─── Beats curator ───────────────────────────────────────────────────────────
 
 st.subheader("Beats curator")
-c1, c2, c3, c4 = st.columns(4)
+c1, c2, c3, c4, c5 = st.columns(5)
 c1.metric("Tempo",    f"{sess['bpm']:.1f} BPM" + (" ×2" if double_time else ""))
 c2.metric("Beats (detected base)", f"{len(sess['beats'])}")
 c3.metric("Duration", f"{sess['duration']:.1f} s")
 _effective_count = len(apply_double_time(sess["beats"])) if double_time else len(sess["beats"])
-_db_count = len(downbeat_indices(
+_meas_count = len(period_indices(
     _effective_count, int(intro_skip), int(outro_skip),
-    int(downbeat_period), int(downbeat_offset),
+    int(measure_period), int(phrase_offset),
 ))
-c4.metric("Downbeats", f"{_db_count}",
-          help=f"every {int(downbeat_period)} effective beats starting at offset {int(downbeat_offset)}")
+_phr_count = len(period_indices(
+    _effective_count, int(intro_skip), int(outro_skip),
+    int(phrase_period), int(phrase_offset),
+))
+c4.metric("Measures", f"{_meas_count}",
+          help=f"every {int(measure_period)} effective beats starting at offset {int(phrase_offset)}")
+c5.metric("Phrases", f"{_phr_count}",
+          help=f"every {int(phrase_period)} effective beats starting at offset {int(phrase_offset)}")
 
 st.caption(
     "One beat timestamp per line, in seconds. Edit, add, or remove lines to "
@@ -580,22 +735,32 @@ if tool_cols[2].button("Apply nudge"):
 if tool_cols[3].button("Preview with audible clicks", disabled=bool(parse_errors)):
     # Click only the EFFECTIVE beats that will actually be scored — doubled
     # if the flag is on, then with intro/outro slices applied, so the preview
-    # matches what the player will do. Downbeats get a higher-pitched click.
+    # matches what the player will do. Measure-1s get a mid-pitched click,
+    # phrase-1s get a higher-pitched/louder click.
     scored = effective_beats[int(intro_skip) : len(effective_beats) - int(outro_skip)]
-    db_idxs = downbeat_indices(
+    meas_idxs = period_indices(
         len(effective_beats), int(intro_skip), int(outro_skip),
-        int(downbeat_period), int(downbeat_offset),
+        int(measure_period), int(phrase_offset),
     )
-    db_times = [effective_beats[i] for i in db_idxs]
-    with st.spinner(f"Rendering click preview ({len(scored)} clicks, {len(db_times)} downbeats)…"):
+    phr_idxs = period_indices(
+        len(effective_beats), int(intro_skip), int(outro_skip),
+        int(phrase_period), int(phrase_offset),
+    )
+    meas_times = [effective_beats[i] for i in meas_idxs]
+    phr_times  = [effective_beats[i] for i in phr_idxs]
+    with st.spinner(
+        f"Rendering click preview ({len(scored)} beats, "
+        f"{len(meas_times)} measures, {len(phr_times)} phrases)…"
+    ):
         y, sr = load_audio(audio_path)
-        wav = click_preview_bytes(y, sr, scored, downbeats=db_times)
+        wav = click_preview_bytes(y, sr, scored, measures=meas_times, phrases=phr_times)
     dt_note = " (double-time on)" if double_time else ""
     st.caption(
         f"Clicks on beats {int(intro_skip) + 1}–{len(effective_beats) - int(outro_skip)} "
         f"of {len(effective_beats)} effective"
         f"{dt_note} (intro skip {int(intro_skip)}, outro skip {int(outro_skip)}). "
-        f"Downbeats: {len(db_times)} (higher-pitched clicks)."
+        f"Measure-1s: {len(meas_times)} (mid pitch). "
+        f"Phrase-1s: {len(phr_times)} (high pitch, loudest)."
     )
     st.audio(wav, format="audio/wav")
 
@@ -612,10 +777,7 @@ st.caption(
 )
 
 if RECORDER_DEST.exists():
-    st.markdown(
-        f"**Recorder:** `{RECORDER_DEST.resolve()}` — "
-        f"`open '{RECORDER_DEST.resolve()}'` in a terminal to launch it."
-    )
+    st.markdown(f"Launch the [recorder]({recorder_url}) (link also at the top of the page).")
 else:
     st.info("Recorder HTML not yet copied — click **Save to library** once to copy it into place.")
 
@@ -710,22 +872,76 @@ if st.button("Save to library", type="primary", disabled=not can_save):
         outro_skip=int(outro_skip),
         notes=notes_val.strip(),
         double_time=bool(double_time),
-        downbeat_period=int(downbeat_period),
-        downbeat_offset=int(downbeat_offset),
+        measure_period=int(measure_period),
+        phrase_period=int(phrase_period),
+        phrase_offset=int(phrase_offset),
+        spotify_track_uri=spotify_val,
     )
     eff_count = len(apply_double_time(parsed_beats)) if double_time else len(parsed_beats)
-    db_saved = len(downbeat_indices(
+    meas_saved = len(period_indices(
         eff_count, int(intro_skip), int(outro_skip),
-        int(downbeat_period), int(downbeat_offset),
+        int(measure_period), int(phrase_offset),
+    ))
+    phr_saved = len(period_indices(
+        eff_count, int(intro_skip), int(outro_skip),
+        int(phrase_period), int(phrase_offset),
     ))
     st.success(
         f"Saved `{slug}` ({len(parsed_beats)} base → {eff_count} effective beats, "
         f"intro skip {intro_skip}, outro skip {outro_skip}"
         f"{', double-time ON' if double_time else ''}, "
-        f"{db_saved} downbeats every {int(downbeat_period)})."
+        f"{meas_saved} measures every {int(measure_period)}, "
+        f"{phr_saved} phrases every {int(phrase_period)})."
     )
     st.code(f"open '{PLAYER_DEST.resolve()}'", language="bash")
     st.caption(
         f"Library now holds {len(library_slugs())} song(s). "
         f"The player picks them up from `library/index.js` on next load."
     )
+
+
+# ─── Phone bundle ────────────────────────────────────────────────────────────
+
+st.divider()
+st.subheader("Build phone bundle")
+st.caption(
+    "Bundle the player and selected songs into one self-contained HTML — "
+    "no sidecar files, no server. AirDrop / email / drop in iCloud Drive, "
+    "then open on the phone. Figure ~7 MB per minute of audio."
+)
+
+bundle_slugs = library_slugs()
+if not bundle_slugs:
+    st.info("Library is empty — save at least one song to build a bundle.")
+else:
+    # Size estimate from on-disk audio
+    size_hint = {}
+    for s in bundle_slugs:
+        a = find_audio_for(s)
+        if a:
+            # base64 overhead ≈ 4/3, plus JSON/HTML scaffolding
+            size_hint[s] = int(a.stat().st_size * 1.35)
+
+    def _label(slug: str) -> str:
+        rec = load_song_record(slug) or {}
+        mb = size_hint.get(slug, 0) / 1_048_576
+        return f"{rec.get('title', slug)}  (~{mb:.1f} MB)"
+
+    picked = st.multiselect(
+        "Songs to include",
+        options=bundle_slugs,
+        default=bundle_slugs,
+        format_func=_label,
+    )
+    est_mb = sum(size_hint.get(s, 0) for s in picked) / 1_048_576
+    st.caption(f"Estimated bundle size: **~{est_mb:.1f} MB** "
+               f"({len(picked)} song{'' if len(picked) == 1 else 's'}).")
+
+    if st.button("Build bundle", type="primary", disabled=not picked):
+        with st.spinner(f"Bundling {len(picked)} song(s)…"):
+            out, size = build_phone_bundle(picked)
+        st.success(
+            f"Wrote `{out.resolve()}` ({size / 1_048_576:.1f} MB). "
+            "AirDrop or email it to the phone and open in Safari / Chrome."
+        )
+        st.code(f"open -R '{out.resolve()}'  # reveal in Finder for AirDrop", language="bash")

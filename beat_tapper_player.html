@@ -36,6 +36,36 @@
     transition: background 0.1s, border-color 0.1s;
   }
   #picker .xlink:hover { background: rgba(244,114,182,0.12); border-color: #f472b6; }
+
+  /* Spotify bar inside the picker */
+  #spotify-bar {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 20px; padding: 10px 16px;
+    background: rgba(29,185,84,0.08);
+    border: 1px solid rgba(29,185,84,0.3);
+    border-radius: 12px;
+    font-size: 13px;
+    max-width: 980px; width: 100%;
+    box-sizing: border-box;
+  }
+  #spotify-bar .sp-status { color: #94a3b8; flex: 1; }
+  #spotify-bar .sp-status.ok { color: #86efac; }
+  #spotify-bar button {
+    cursor: pointer; border: 1px solid rgba(29,185,84,0.5);
+    background: rgba(29,185,84,0.15); color: #e8ebf0;
+    padding: 6px 12px; border-radius: 8px; font-size: 12px; font-weight: 600;
+    transition: background 0.1s;
+  }
+  #spotify-bar button:hover { background: rgba(29,185,84,0.3); }
+  #spotify-bar button.secondary { border-color: #334155; background: #1e293b; }
+  #spotify-bar button.secondary:hover { background: #334155; }
+  .song-card .sp-tag {
+    display: inline-block; margin-top: 6px;
+    font-size: 11px; color: #86efac;
+    border: 1px solid rgba(134,239,172,0.4);
+    padding: 2px 8px; border-radius: 10px;
+  }
+
   #picker-list {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
@@ -79,14 +109,20 @@
     will-change: transform;
     display: none;
   }
-  .note.downbeat {
+  .note.measure {
+    left: 0px;
+    width: 220px; height: 50px;
+    border-radius: 28px;
+    box-shadow: 0 0 28px rgba(244,63,94,0.75), inset 0 0 0 2px rgba(103,232,249,0.5);
+  }
+  .note.phrase {
     left: -10px;
     width: 240px; height: 58px;
     border-radius: 32px;
     background: radial-gradient(circle at 30% 30%, #67e8f9, #0891b2);
     box-shadow: 0 0 35px rgba(103,232,249,0.85), inset 0 0 0 3px rgba(255,255,255,0.2);
   }
-  .note.downbeat::after {
+  .note.phrase::after {
     content: "1";
     position: absolute; inset: 0;
     display: flex; align-items: center; justify-content: center;
@@ -96,9 +132,12 @@
   .note.perfect { background: radial-gradient(circle at 30% 30%, #86efac, #16a34a); box-shadow: 0 0 25px rgba(34,197,94,0.8); }
   .note.good    { background: radial-gradient(circle at 30% 30%, #fde68a, #ca8a04); box-shadow: 0 0 25px rgba(234,179,8,0.8); }
   .note.miss    { background: radial-gradient(circle at 30% 30%, #94a3b8, #475569); box-shadow: none; opacity: 0.35; }
-  .note.downbeat.perfect { background: radial-gradient(circle at 30% 30%, #86efac, #16a34a); box-shadow: 0 0 35px rgba(34,197,94,0.9), inset 0 0 0 3px rgba(255,255,255,0.3); }
-  .note.downbeat.good    { background: radial-gradient(circle at 30% 30%, #fde68a, #ca8a04); box-shadow: 0 0 35px rgba(234,179,8,0.9), inset 0 0 0 3px rgba(255,255,255,0.3); }
-  .note.downbeat.miss    { background: radial-gradient(circle at 30% 30%, #94a3b8, #475569); box-shadow: inset 0 0 0 3px rgba(255,255,255,0.1); opacity: 0.35; }
+  .note.measure.perfect { box-shadow: 0 0 28px rgba(34,197,94,0.85), inset 0 0 0 2px rgba(103,232,249,0.5); }
+  .note.measure.good    { box-shadow: 0 0 28px rgba(234,179,8,0.85), inset 0 0 0 2px rgba(103,232,249,0.5); }
+  .note.measure.miss    { box-shadow: inset 0 0 0 2px rgba(103,232,249,0.25); opacity: 0.35; }
+  .note.phrase.perfect { background: radial-gradient(circle at 30% 30%, #86efac, #16a34a); box-shadow: 0 0 35px rgba(34,197,94,0.9), inset 0 0 0 3px rgba(255,255,255,0.3); }
+  .note.phrase.good    { background: radial-gradient(circle at 30% 30%, #fde68a, #ca8a04); box-shadow: 0 0 35px rgba(234,179,8,0.9), inset 0 0 0 3px rgba(255,255,255,0.3); }
+  .note.phrase.miss    { background: radial-gradient(circle at 30% 30%, #94a3b8, #475569); box-shadow: inset 0 0 0 3px rgba(255,255,255,0.1); opacity: 0.35; }
 
   #hitline {
     position: absolute; left: 0; right: 0;
@@ -126,6 +165,9 @@
   #info h1 { font-size: 22px; color: #e8ebf0; margin: 0 0 6px 0; font-weight: 700; }
   #info .hint { margin-top: 10px; font-size: 12px; }
   #info .skipnote { margin-top: 6px; font-size: 12px; color: #f472b6; }
+  #info .source   { margin-top: 6px; font-size: 12px; font-weight: 600; }
+  #info .source.spotify { color: #86efac; }
+  #info .source.audio   { color: #94a3b8; }
 
   #feedback {
     position: absolute; left: 50%;
@@ -177,6 +219,12 @@
   <h1>Beat Tapper</h1>
   <div class="tagline">Tap along to the beat. Pick a song to start.</div>
   <a class="xlink" href="beat_tapper_recorder.html">Fix wrong beats → Tap recorder</a>
+  <div id="spotify-bar">
+    <span class="sp-status" id="sp_status">Spotify: not configured</span>
+    <button id="sp_signin" style="display:none">Sign in</button>
+    <button id="sp_signout" class="secondary" style="display:none">Sign out</button>
+    <button id="sp_config" class="secondary">Settings</button>
+  </div>
   <div id="picker-list"></div>
 </div>
 
@@ -191,16 +239,18 @@
     <div><span class="lbl">Good</span><span class="v" id="s_good">0</span></div>
     <div><span class="lbl">Miss</span><span class="v" id="s_miss">0</span></div>
     <div><span class="lbl">Accuracy</span><span class="v" id="s_acc">—</span></div>
-    <div><span class="lbl">Downbeats</span><span class="v" id="s_db">—</span></div>
+    <div><span class="lbl">Phrases</span><span class="v" id="s_phr">—</span></div>
   </div>
 
   <div id="info">
     <h1 id="i_title"></h1>
     <div id="i_meta"></div>
+    <div id="i_source" class="source"></div>
     <div id="i_skip" class="skipnote" style="display:none"></div>
     <div class="hint">
       Tap <b>SPACE</b> · click · or touch on any beat.<br>
-      Hit <b>SHIFT</b> (or right-click) on the cyan <b>downbeats</b>.
+      Hit <b>SHIFT</b> (or right-click) on the cyan <b>phrase 1</b> pills.<br>
+      Smaller cyan-ringed pills mark each measure.
     </div>
   </div>
 
@@ -217,8 +267,8 @@
     <div class="row"><span class="lbl">Accuracy</span><span class="v"><span id="f_acc">0</span>%</span></div>
     <div class="row"><span class="lbl">Mean error</span><span class="v"><span id="f_err">0</span> ms</span></div>
     <div class="row"><span class="lbl">Timing</span><span class="v" id="f_bias">—</span></div>
-    <div class="row"><span class="lbl">Downbeats</span><span class="v" id="f_db">—</span></div>
-    <div class="row"><span class="lbl">Downbeat acc.</span><span class="v" id="f_db_acc">—</span></div>
+    <div class="row"><span class="lbl">Phrases</span><span class="v" id="f_phr">—</span></div>
+    <div class="row"><span class="lbl">Phrase acc.</span><span class="v" id="f_phr_acc">—</span></div>
     <div class="btnrow">
       <button onclick="window.CK.playAgain()">Play Again</button>
       <button class="secondary" onclick="window.CK.returnToPicker()">Back to Picker</button>
@@ -249,19 +299,329 @@ const feedback = document.getElementById("feedback");
 const startBtn = document.getElementById("start");
 const summary  = document.getElementById("summary");
 const backBtn  = document.getElementById("back-to-picker");
+const spStatus = document.getElementById("sp_status");
+const spSignIn = document.getElementById("sp_signin");
+const spSignOut= document.getElementById("sp_signout");
+const spConfig = document.getElementById("sp_config");
 
 // ─── Game state ──────────────────────────────────────────────────────────────
 let currentSong = null;         // {title, beats, intro_skip, outro_skip, ...}
 let activeBeats = [];           // beats slice we actually score against
-let downbeatSet = null;         // Set<number> of indices into activeBeats that are downbeats
-let notes = [];                 // {t, el, used, isDownbeat}
+let phraseSet  = null;          // Set<number> of indices into activeBeats that are phrase-1s
+let measureSet = null;          // Set<number> of indices that are measure-1s (includes phrase-1s)
+let notes = [];                 // {t, el, used, isPhrase, isMeasure}
 let errors = [];                // signed tap errors (sec, + = late)
 let state  = { perfect: 0, good: 0, miss: 0, score: 0, combo: 0, maxCombo: 0 };
-let dbState = { hit: 0, missedAsBeat: 0, miss: 0, total: 0 };
+let phrState = { hit: 0, missedAsBeat: 0, miss: 0, total: 0 };
 let lastTapAt = -Infinity;  // dedup window — see tap()
 let hitY = 0;
 let finished = false;
 let started  = false;
+let transport = null;       // AudioTransport or SpotifyTransport — set in CK_START
+
+// ─── Spotify auth (PKCE, no secret) ──────────────────────────────────────────
+const SPOTIFY_SCOPES = "streaming user-read-email user-read-private";
+
+function ckSpotifyClientId() {
+  return localStorage.getItem("ck_spotify_client_id") || "";
+}
+function ckSpotifyToken() {
+  const token = localStorage.getItem("ck_spotify_access_token");
+  const exp   = parseInt(localStorage.getItem("ck_spotify_expires_at") || "0", 10);
+  if (!token || Date.now() > exp - 30_000) return null;
+  return token;
+}
+function ckSpotifyIsSignedIn() { return !!ckSpotifyToken(); }
+function ckSpotifySignOut() {
+  for (const k of ["ck_spotify_access_token", "ck_spotify_expires_at", "ck_spotify_refresh_token"]) {
+    localStorage.removeItem(k);
+  }
+  renderSpotifyBar();
+  renderPicker();
+}
+function ckRandomString(n) {
+  const alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  const arr = crypto.getRandomValues(new Uint8Array(n));
+  let out = "";
+  for (const b of arr) out += alphabet[b % alphabet.length];
+  return out;
+}
+async function ckPkceChallenge(verifier) {
+  const buf  = new TextEncoder().encode(verifier);
+  const hash = await crypto.subtle.digest("SHA-256", buf);
+  const b64  = btoa(String.fromCharCode(...new Uint8Array(hash)));
+  return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function ckRedirectUri() {
+  // Spotify requires an exact-match registration. Use origin + pathname
+  // (no query, no hash). You register THIS value in the Spotify dev dashboard.
+  return location.origin + location.pathname;
+}
+async function ckSpotifyStartLogin() {
+  const clientId = ckSpotifyClientId();
+  if (!clientId) { alert("Set your Spotify client ID first (Settings)."); return; }
+  if (location.protocol === "file:") {
+    alert("Spotify sign-in doesn't work from file://.\n\nServe the player over HTTP(S) " +
+          "first, e.g.:\n  python3 -m http.server 8080\nthen open " +
+          "http://127.0.0.1:8080/beat_tapper_player.html");
+    return;
+  }
+  const verifier  = ckRandomString(64);
+  localStorage.setItem("ck_spotify_code_verifier", verifier);
+  const challenge = await ckPkceChallenge(verifier);
+  const params = new URLSearchParams({
+    client_id:             clientId,
+    response_type:         "code",
+    redirect_uri:          ckRedirectUri(),
+    code_challenge_method: "S256",
+    code_challenge:        challenge,
+    scope:                 SPOTIFY_SCOPES,
+  });
+  location.href = "https://accounts.spotify.com/authorize?" + params.toString();
+}
+async function ckSpotifyHandleCallback() {
+  const url  = new URL(location.href);
+  const code = url.searchParams.get("code");
+  const err  = url.searchParams.get("error");
+  if (err) {
+    alert("Spotify auth error: " + err);
+    history.replaceState(null, "", url.pathname);
+    return;
+  }
+  if (!code) return;
+  const verifier = localStorage.getItem("ck_spotify_code_verifier");
+  const clientId = ckSpotifyClientId();
+  if (!verifier || !clientId) {
+    history.replaceState(null, "", url.pathname);
+    return;
+  }
+  const body = new URLSearchParams({
+    grant_type:    "authorization_code",
+    code,
+    redirect_uri:  ckRedirectUri(),
+    client_id:     clientId,
+    code_verifier: verifier,
+  });
+  const resp = await fetch("https://accounts.spotify.com/api/token", {
+    method:  "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body:    body.toString(),
+  });
+  const json = await resp.json();
+  if (!resp.ok) {
+    alert("Spotify token exchange failed: " + (json.error_description || json.error));
+    history.replaceState(null, "", url.pathname);
+    return;
+  }
+  localStorage.setItem("ck_spotify_access_token", json.access_token);
+  localStorage.setItem("ck_spotify_expires_at",   String(Date.now() + json.expires_in * 1000));
+  if (json.refresh_token) localStorage.setItem("ck_spotify_refresh_token", json.refresh_token);
+  localStorage.removeItem("ck_spotify_code_verifier");
+  history.replaceState(null, "", url.pathname);
+}
+
+function renderSpotifyBar() {
+  const hasId   = !!ckSpotifyClientId();
+  const signed  = ckSpotifyIsSignedIn();
+  if (!hasId) {
+    spStatus.textContent = "Spotify: not configured";
+    spStatus.className   = "sp-status";
+    spSignIn.style.display  = "none";
+    spSignOut.style.display = "none";
+  } else if (signed) {
+    spStatus.textContent = "Spotify: signed in (songs with a Spotify URI will play via Spotify)";
+    spStatus.className   = "sp-status ok";
+    spSignIn.style.display  = "none";
+    spSignOut.style.display = "inline-block";
+  } else {
+    spStatus.textContent = "Spotify: configured, not signed in";
+    spStatus.className   = "sp-status";
+    spSignIn.style.display  = "inline-block";
+    spSignOut.style.display = "none";
+  }
+}
+
+function ckSpotifyConfigure() {
+  const cur = ckSpotifyClientId();
+  const next = prompt(
+    "Spotify Client ID\n\n" +
+    "1. Go to https://developer.spotify.com/dashboard → Create app\n" +
+    "2. Redirect URI (exact match): " + ckRedirectUri() + "\n" +
+    "3. Enable the Web Playback SDK\n" +
+    "4. Paste your Client ID below (stored only in this browser).\n" +
+    "Leave blank to clear.",
+    cur
+  );
+  if (next === null) return;        // cancel
+  const trimmed = next.trim();
+  if (trimmed) localStorage.setItem("ck_spotify_client_id", trimmed);
+  else         localStorage.removeItem("ck_spotify_client_id");
+  renderSpotifyBar();
+}
+
+// ─── Transports ──────────────────────────────────────────────────────────────
+// Each transport implements: init(data), play(), pause(), seek(t), currentTime(),
+// onEnded(cb), teardown(). Times are in seconds.
+class AudioTransport {
+  constructor() {
+    this.audio = audio;
+    this._endedCb = null;
+  }
+  async init(data) {
+    this.audio.src = "data:" + data.audio_mime + ";base64," + data.audio_b64;
+  }
+  async play() {
+    this.audio.currentTime = 0;
+    return this.audio.play();
+  }
+  pause() { this.audio.pause(); }
+  async seek(t) { this.audio.currentTime = t; }
+  currentTime() { return this.audio.currentTime; }
+  onEnded(cb) {
+    this._endedCb = cb;
+    this.audio.onended = cb;
+  }
+  teardown() {
+    this.audio.pause();
+    this.audio.onended = null;
+    this.audio.removeAttribute("src");
+    this.audio.load();
+  }
+  get kind() { return "audio"; }
+}
+
+let _spotifySdkPromise = null;
+function ckSpotifyEnsureSdkLoaded() {
+  if (_spotifySdkPromise) return _spotifySdkPromise;
+  _spotifySdkPromise = new Promise((resolve) => {
+    if (window.Spotify && window.Spotify.Player) { resolve(); return; }
+    window.onSpotifyWebPlaybackSDKReady = () => resolve();
+    const s = document.createElement("script");
+    s.src = "https://sdk.scdn.co/spotify-player.js";
+    document.head.appendChild(s);
+  });
+  return _spotifySdkPromise;
+}
+
+class SpotifyTransport {
+  constructor(trackUri, token, duration) {
+    this.trackUri    = trackUri;
+    this.token       = token;
+    this.duration    = duration;    // seconds; used as end-of-track fallback
+    this.player      = null;
+    this.deviceId    = null;
+    this._posAnchor  = 0;           // ms into track at last poll
+    this._posAnchorAt= 0;           // performance.now() at last poll
+    this._playing    = false;
+    this._pollId     = null;
+    this._endedCb    = null;
+    this._endedFired = false;
+  }
+  async init(data) {
+    await ckSpotifyEnsureSdkLoaded();
+    this.player = new Spotify.Player({
+      name:          "Beat Tapper",
+      getOAuthToken: (cb) => cb(this.token),
+      volume:        0.8,
+    });
+    this.player.addListener("initialization_error", ({message}) => console.error("init_error:", message));
+    this.player.addListener("authentication_error", ({message}) => {
+      console.error("auth_error:", message);
+      alert("Spotify auth expired. Please sign in again.");
+    });
+    this.player.addListener("account_error", ({message}) => {
+      console.error("account_error:", message);
+      alert("Spotify account error: " + message +
+            "\n(The Web Playback SDK requires Spotify Premium.)");
+    });
+    this.player.addListener("playback_error", ({message}) => console.error("playback_error:", message));
+    this.player.addListener("player_state_changed", (state) => {
+      if (!state) return;
+      this._posAnchor   = state.position;
+      this._posAnchorAt = performance.now();
+      this._playing     = !state.paused;
+    });
+
+    const ready = new Promise((resolve, reject) => {
+      this.player.addListener("ready", ({device_id}) => {
+        this.deviceId = device_id;
+        resolve();
+      });
+      setTimeout(() => reject(new Error("Spotify player timed out connecting.")), 10_000);
+    });
+    const ok = await this.player.connect();
+    if (!ok) throw new Error("Spotify player.connect() failed.");
+    await ready;
+  }
+  async play() {
+    const resp = await fetch(
+      "https://api.spotify.com/v1/me/player/play?device_id=" + encodeURIComponent(this.deviceId),
+      {
+        method:  "PUT",
+        headers: {
+          "Authorization": "Bearer " + this.token,
+          "Content-Type":  "application/json",
+        },
+        body: JSON.stringify({ uris: [this.trackUri], position_ms: 0 }),
+      }
+    );
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw new Error("Spotify play failed: " + resp.status + " " + text);
+    }
+    this._posAnchor   = 0;
+    this._posAnchorAt = performance.now();
+    this._playing     = true;
+    this._startPolling();
+  }
+  async pause() {
+    this._stopPolling();
+    if (this.player) { try { await this.player.pause(); } catch(e) {} }
+    this._playing = false;
+  }
+  async seek(t) {
+    if (this.player) { try { await this.player.seek(Math.round(t * 1000)); } catch(e) {} }
+    this._posAnchor   = Math.round(t * 1000);
+    this._posAnchorAt = performance.now();
+  }
+  currentTime() {
+    if (!this._playing) return this._posAnchor / 1000;
+    const elapsed = performance.now() - this._posAnchorAt;
+    return (this._posAnchor + elapsed) / 1000;
+  }
+  onEnded(cb) { this._endedCb = cb; }
+  teardown() {
+    this._stopPolling();
+    if (this.player) {
+      try { this.player.pause(); } catch(e) {}
+      try { this.player.disconnect(); } catch(e) {}
+    }
+    this.player = null;
+  }
+  _startPolling() {
+    this._stopPolling();
+    this._endedFired = false;
+    this._pollId = setInterval(async () => {
+      if (!this.player) return;
+      let state;
+      try { state = await this.player.getCurrentState(); } catch(e) { return; }
+      if (state) {
+        this._posAnchor   = state.position;
+        this._posAnchorAt = performance.now();
+        this._playing     = !state.paused;
+      }
+      if (!this._endedFired && this.duration &&
+          this.currentTime() >= this.duration - 0.05) {
+        this._endedFired = true;
+        if (this._endedCb) this._endedCb();
+      }
+    }, 250);
+  }
+  _stopPolling() {
+    if (this._pollId) { clearInterval(this._pollId); this._pollId = null; }
+  }
+  get kind() { return "spotify"; }
+}
 
 // ─── Picker ──────────────────────────────────────────────────────────────────
 function esc(s) {
@@ -278,11 +638,13 @@ function renderPicker() {
       'and save it to the library.</div>';
     return;
   }
+  const signedIn = ckSpotifyIsSignedIn();
   pickList.innerHTML = songs.map(s => `
     <button class="song-card" data-slug="${esc(s.slug)}">
       <div class="t">${esc(s.title)}</div>
       <div class="m">${Math.round(s.bpm)} BPM · ${s.beats_count} beats · ${s.duration.toFixed(1)}s</div>
       ${s.notes ? `<div class="n">${esc(s.notes)}</div>` : ''}
+      ${s.has_spotify ? `<div class="sp-tag">${signedIn ? "via Spotify" : "Spotify available"}</div>` : ''}
     </button>
   `).join("");
   pickList.querySelectorAll(".song-card").forEach(el => {
@@ -290,21 +652,67 @@ function renderPicker() {
   });
 }
 
+// Registry of loaded song data by slug. In dev mode this fills in as the
+// user picks songs; in bundled mode (phone build), it's pre-populated at
+// startup from window.CK_PRELOAD.
+window.CK_REGISTRY = {};
+
 function loadSong(slug) {
-  // Dynamically inject the song's data script; it calls window.CK_LOAD(slug, data).
+  const preloaded = window.CK_REGISTRY[slug];
+  if (preloaded) { CK_START(slug, preloaded); return; }
+  // Dev mode: inject the song's data script; it calls window.CK_LOAD which
+  // registers the data, and we start the game once it's on disk.
   const sc = document.createElement("script");
   sc.src = "library/" + encodeURIComponent(slug) + ".js";
+  sc.onload = () => {
+    const data = window.CK_REGISTRY[slug];
+    if (data) CK_START(slug, data);
+    else alert("library/" + slug + ".js loaded but didn't register data.");
+  };
   sc.onerror = () => alert("Could not load library/" + slug + ".js");
   document.head.appendChild(sc);
 }
 
 // ─── Game ────────────────────────────────────────────────────────────────────
+// CK_LOAD is the entry point every song .js file uses — it just registers
+// the data. The picker (or bundled bootstrap) kicks off the game via CK_START.
 window.CK_LOAD = function(slug, data) {
+  window.CK_REGISTRY[slug] = data;
+};
+
+async function CK_START(slug, data) {
   currentSong = data;
   picker.style.display = "none";
   game.style.display = "block";
 
-  audio.src = "data:" + data.audio_mime + ";base64," + data.audio_b64;
+  // Pick a transport: Spotify if the song carries a URI AND we're signed in,
+  // otherwise fall back to the bundled audio.
+  if (transport) { try { transport.teardown(); } catch(e) {} transport = null; }
+  const token = ckSpotifyToken();
+  if (data.spotify_uri && token) {
+    try {
+      transport = new SpotifyTransport(data.spotify_uri, token, data.duration);
+      await transport.init(data);
+    } catch (e) {
+      console.warn("Spotify transport failed, falling back to audio:", e);
+      alert("Spotify playback couldn't start (" + e.message + ").\nFalling back to local audio.");
+      transport = new AudioTransport();
+      await transport.init(data);
+    }
+  } else {
+    transport = new AudioTransport();
+    await transport.init(data);
+  }
+  transport.onEnded(finish);
+
+  const sourceEl = document.getElementById("i_source");
+  if (transport.kind === "spotify") {
+    sourceEl.textContent = "Source: Spotify";
+    sourceEl.className   = "source spotify";
+  } else {
+    sourceEl.textContent = "Source: local audio";
+    sourceEl.className   = "source audio";
+  }
 
   document.getElementById("i_title").textContent = data.title;
   document.getElementById("i_meta").textContent =
@@ -314,20 +722,27 @@ window.CK_LOAD = function(slug, data) {
   const skipEnd   = data.outro_skip || 0;
   activeBeats = data.beats.slice(skipStart, data.beats.length - skipEnd);
 
-  // Downbeats: period/offset are relative to the first active beat
-  // (i.e. the first non-intro effective beat). Offset 0 = first active beat is a downbeat.
-  const period = Math.max(1, data.downbeat_period || 8);
-  const offset = Math.max(0, Math.min(period - 1, data.downbeat_offset || 0));
-  downbeatSet = new Set();
-  for (let i = offset; i < activeBeats.length; i += period) downbeatSet.add(i);
-  dbState.total = downbeatSet.size;
+  // Period/offset are relative to the first active beat (i.e. the first
+  // non-intro effective beat). Fall back to the pre-refactor field names
+  // on legacy library files that only have `downbeat_period`/`downbeat_offset`.
+  const phrasePeriod  = Math.max(1, data.phrase_period  || data.downbeat_period || 8);
+  const phraseOffset  = Math.max(0, Math.min(phrasePeriod - 1,
+                            data.phrase_offset || data.downbeat_offset || 0));
+  const measurePeriod = Math.max(1, data.measure_period || 4);
+  phraseSet = new Set();
+  measureSet = new Set();
+  for (let i = phraseOffset; i < activeBeats.length; i += phrasePeriod) phraseSet.add(i);
+  for (let i = phraseOffset; i < activeBeats.length; i += measurePeriod) measureSet.add(i);
+  phrState.total = phraseSet.size;
 
   const skipDiv = document.getElementById("i_skip");
   const parts = [];
   if (skipStart) parts.push(skipStart + " intro beat" + (skipStart === 1 ? "" : "s") + " skipped");
   if (skipEnd)   parts.push(skipEnd + " outro beat" + (skipEnd === 1 ? "" : "s") + " skipped");
-  parts.push(dbState.total + " downbeat" + (dbState.total === 1 ? "" : "s") +
-             " · every " + period + (offset ? " from offset " + offset : ""));
+  parts.push(measureSet.size + " measure" + (measureSet.size === 1 ? "" : "s") +
+             " of " + measurePeriod);
+  parts.push(phrState.total + " phrase" + (phrState.total === 1 ? "" : "s") +
+             " of " + phrasePeriod + (phraseOffset ? " from offset " + phraseOffset : ""));
   skipDiv.textContent = parts.join(" · ");
   skipDiv.style.display = "block";
 
@@ -340,7 +755,7 @@ window.CK_LOAD = function(slug, data) {
 function resetGameState() {
   notes = []; errors = [];
   state = { perfect: 0, good: 0, miss: 0, score: 0, combo: 0, maxCombo: 0 };
-  dbState = { hit: 0, missedAsBeat: 0, miss: 0, total: downbeatSet ? downbeatSet.size : 0 };
+  phrState = { hit: 0, missedAsBeat: 0, miss: 0, total: phraseSet ? phraseSet.size : 0 };
   lastTapAt = -Infinity;
   finished = false; started = false;
   runway.innerHTML = "";
@@ -358,16 +773,19 @@ function buildNotes() {
   notes = activeBeats.map((t, i) => {
     const el = document.createElement("div");
     el.className = "note";
-    const isDownbeat = downbeatSet && downbeatSet.has(i);
-    if (isDownbeat) el.classList.add("downbeat");
+    const isPhrase  = phraseSet  && phraseSet.has(i);
+    const isMeasure = measureSet && measureSet.has(i);
+    // Phrase wins over measure visually; both are tracked for scoring/display.
+    if (isPhrase)              el.classList.add("phrase");
+    else if (isMeasure)        el.classList.add("measure");
     runway.appendChild(el);
-    return { t, el, used: false, isDownbeat };
+    return { t, el, used: false, isPhrase, isMeasure };
   });
 }
 
 function render() {
   if (finished) return;
-  const now = audio.currentTime;
+  const now = transport.currentTime();
   for (const n of notes) {
     const dt = n.t - now;
     if (dt > LEAD) {
@@ -387,9 +805,9 @@ function render() {
   requestAnimationFrame(render);
 }
 
-function tap(isDownbeatKey) {
+function tap(isPhraseKey) {
   if (finished || !started) return;
-  const now = audio.currentTime;
+  const now = transport.currentTime();
   // Dedup: if Space and Shift fire within a few ms (natural chord-pressing),
   // ignore the second so it doesn't miss the next beat.
   if (now - lastTapAt < 0.04) return;
@@ -424,21 +842,21 @@ function tap(isDownbeatKey) {
     state.score += 50;
   }
 
-  if (best.isDownbeat) {
-    if (isDownbeatKey) {
-      dbState.hit++;
-      state.score += 50;  // downbeat bonus
-      flash(quality === "perfect" ? "Downbeat!" : "Downbeat",
+  if (best.isPhrase) {
+    if (isPhraseKey) {
+      phrState.hit++;
+      state.score += 50;  // phrase bonus
+      flash(quality === "perfect" ? "Phrase!" : "Phrase",
             "#67e8f9", quality === "perfect" ? 60 : 50);
     } else {
-      // Beat hit, but downbeat not identified
-      dbState.missedAsBeat++;
+      // Beat hit, but phrase 1 not identified
+      phrState.missedAsBeat++;
       flash(quality === "perfect" ? "Perfect!" : "Good",
             quality === "perfect" ? "#86efac" : "#fde68a",
             quality === "perfect" ? 56 : 44);
     }
   } else {
-    // Regular beat; SHIFT and SPACE score identically
+    // Regular beat or measure-1 (visual accent only); SHIFT and SPACE score identically
     flash(quality === "perfect" ? "Perfect!" : "Good",
           quality === "perfect" ? "#86efac" : "#fde68a",
           quality === "perfect" ? 56 : 44);
@@ -451,7 +869,7 @@ function autoMiss(n) {
   n.el.classList.add("miss");
   state.miss++;
   state.combo = 0;
-  if (n.isDownbeat) dbState.miss++;
+  if (n.isPhrase) phrState.miss++;
   updateHUD();
 }
 
@@ -476,11 +894,11 @@ function updateHUD() {
   const total = state.perfect + state.good + state.miss;
   const acc = total ? Math.round(100 * (state.perfect + state.good) / total) : 0;
   document.getElementById("s_acc").textContent = total ? (acc + "%") : "—";
-  const dbEl = document.getElementById("s_db");
-  if (dbState.total > 0) {
-    dbEl.textContent = dbState.hit + " / " + dbState.total;
+  const phrEl = document.getElementById("s_phr");
+  if (phrState.total > 0) {
+    phrEl.textContent = phrState.hit + " / " + phrState.total;
   } else {
-    dbEl.textContent = "—";
+    phrEl.textContent = "—";
   }
 }
 
@@ -490,7 +908,7 @@ function finish() {
   for (const n of notes) if (!n.used) {
     n.used = true;
     state.miss++;
-    if (n.isDownbeat) dbState.miss++;
+    if (n.isPhrase) phrState.miss++;
   }
   updateHUD();
 
@@ -517,32 +935,33 @@ function finish() {
   document.getElementById("f_acc").textContent     = acc.toFixed(1);
   document.getElementById("f_err").textContent     = errMs;
   document.getElementById("f_bias").textContent    = bias;
-  if (dbState.total > 0) {
-    const dbAcc = 100 * dbState.hit / dbState.total;
-    document.getElementById("f_db").textContent     = dbState.hit + " / " + dbState.total;
-    document.getElementById("f_db_acc").textContent = dbAcc.toFixed(1) + "%";
+  if (phrState.total > 0) {
+    const phrAcc = 100 * phrState.hit / phrState.total;
+    document.getElementById("f_phr").textContent     = phrState.hit + " / " + phrState.total;
+    document.getElementById("f_phr_acc").textContent = phrAcc.toFixed(1) + "%";
   } else {
-    document.getElementById("f_db").textContent     = "—";
-    document.getElementById("f_db_acc").textContent = "—";
+    document.getElementById("f_phr").textContent     = "—";
+    document.getElementById("f_phr_acc").textContent = "—";
   }
   summary.style.display = "block";
 }
 
 window.CK = {
-  playAgain() {
+  async playAgain() {
     if (!currentSong) return;
     summary.style.display = "none";
     resetGameState();
     startBtn.style.display = "block";
-    audio.currentTime = 0;
+    if (transport) { try { await transport.seek(0); } catch(e) {} }
   },
-  returnToPicker() {
+  async returnToPicker() {
     summary.style.display = "none";
-    audio.pause();
+    if (transport) { try { transport.teardown(); } catch(e) {} transport = null; }
     game.style.display = "none";
     picker.style.display = "flex";
     resetGameState();
     currentSong = null;
+    renderPicker();
   },
 };
 
@@ -550,21 +969,20 @@ window.CK = {
 layout();
 window.addEventListener("resize", layout);
 
-startBtn.addEventListener("click", () => {
+startBtn.addEventListener("click", async () => {
   startBtn.style.display = "none";
   buildNotes();
-  audio.currentTime = 0;
-  audio.play().then(() => {
+  try {
+    await transport.play();
     started = true;
     requestAnimationFrame(render);
-  }).catch(err => {
-    alert("Could not play audio: " + err.message);
+  } catch (err) {
+    alert("Could not start playback: " + err.message);
     startBtn.style.display = "block";
-  });
+  }
 });
 
 backBtn.addEventListener("click", () => window.CK.returnToPicker());
-audio.addEventListener("ended", finish);
 
 document.addEventListener("keydown", (e) => {
   if (e.repeat) return;
@@ -578,14 +996,31 @@ document.addEventListener("keydown", (e) => {
 });
 game.addEventListener("pointerdown", (e) => {
   if (e.target.tagName === "BUTTON") return;
-  // Right-click (button 2) or shift-click → downbeat tap
+  // Right-click (button 2) or shift-click → phrase tap
   tap(e.button === 2 || e.shiftKey);
 });
-// Suppress the default context menu inside the game so right-click can be used for downbeats.
+// Suppress the default context menu inside the game so right-click can be used for phrase taps.
 game.addEventListener("contextmenu", (e) => { e.preventDefault(); });
 
+// ─── Spotify-bar wiring ──────────────────────────────────────────────────────
+spSignIn.addEventListener("click",  () => ckSpotifyStartLogin());
+spSignOut.addEventListener("click", () => ckSpotifySignOut());
+spConfig.addEventListener("click",  () => ckSpotifyConfigure());
+
 // ─── Load library index ──────────────────────────────────────────────────────
-(function() {
+// In bundled mode (phone build), the HTML provides window.CK_SONGS and
+// window.CK_PRELOAD directly; we just register each preloaded song and render.
+// In dev mode, we fetch library/index.js (which sets window.CK_SONGS).
+(async function() {
+  await ckSpotifyHandleCallback();
+  renderSpotifyBar();
+  if (window.CK_BUNDLED && window.CK_PRELOAD) {
+    for (const slug in window.CK_PRELOAD) {
+      window.CK_REGISTRY[slug] = window.CK_PRELOAD[slug];
+    }
+    renderPicker();
+    return;
+  }
   const s = document.createElement("script");
   s.src = "library/index.js";
   s.onload  = renderPicker;
