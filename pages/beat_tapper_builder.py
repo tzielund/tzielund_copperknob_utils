@@ -46,6 +46,11 @@ PLAYER_DEST    = OUTPUT_DIR / "beat_tapper.html"
 RECORDER_SRC   = Path("beat_tapper_recorder.html")
 RECORDER_DEST  = OUTPUT_DIR / "beat_tapper_recorder.html"
 
+# Repo-root `library/` is the Spotify-only library served by GitHub Pages.
+# Lightweight (no audio_b64), committed to git. Only songs with a Spotify URI
+# are included — the player on Pages uses Spotify as the sole audio source.
+PAGES_LIBRARY_DIR = Path("library")
+
 MIME_BY_EXT = {
     ".mp3":  "audio/mpeg",
     ".wav":  "audio/wav",
@@ -327,6 +332,62 @@ def rebuild_index() -> None:
     entries.sort(key=lambda e: e["title"].lower())
     js = "window.CK_SONGS = " + json.dumps(entries, indent=2) + ";\n"
     (LIBRARY_DIR / "index.js").write_text(js)
+
+
+def publish_spotify_library() -> dict:
+    """Rebuild repo-root `library/` as the Spotify-only library for GitHub Pages.
+
+    Only songs with a Spotify URI are included; each per-song JS carries beats
+    + metadata + spotify_uri but NO audio (the player on Pages uses Spotify as
+    the sole audio source). Existing entries are cleared first so removed
+    songs disappear. Returns a stats dict for the UI.
+    """
+    PAGES_LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
+    for f in list(PAGES_LIBRARY_DIR.glob("*.js")):
+        f.unlink()
+
+    entries = []
+    for slug in library_slugs():
+        rec = load_song_record(slug)
+        if not rec:
+            continue
+        uri = rec.get("spotify_track_uri", "")
+        if not uri:
+            continue
+        base = rec["beats"]
+        effective = apply_double_time(base) if rec.get("double_time") else base
+        js_payload = {
+            "title":          rec["title"],
+            "bpm":            rec["bpm"],
+            "duration":       rec["duration"],
+            "beats":          effective,
+            "intro_skip":     rec.get("intro_skip", 0),
+            "outro_skip":     rec.get("outro_skip", 0),
+            "measure_period": rec.get("measure_period", 4),
+            "phrase_period":  rec.get("phrase_period", rec.get("downbeat_period", 8)),
+            "phrase_offset":  rec.get("phrase_offset", rec.get("downbeat_offset", 0)),
+            "spotify_uri":    uri,
+            "notes":          rec.get("notes", ""),
+            # Deliberately no audio_mime / audio_b64 — Spotify-only.
+        }
+        (PAGES_LIBRARY_DIR / f"{slug}.js").write_text(
+            f"window.CK_LOAD({json.dumps(slug)}, {json.dumps(js_payload)});\n"
+        )
+        entries.append({
+            "slug":        slug,
+            "title":       rec["title"],
+            "bpm":         rec["bpm"],
+            "duration":    rec["duration"],
+            "beats_count": len(effective),
+            "notes":       rec.get("notes", ""),
+            "has_spotify": True,
+        })
+    entries.sort(key=lambda e: e["title"].lower())
+    (PAGES_LIBRARY_DIR / "index.js").write_text(
+        "window.CK_SONGS = " + json.dumps(entries, indent=2) + ";\n"
+    )
+    total_size = sum(f.stat().st_size for f in PAGES_LIBRARY_DIR.iterdir() if f.is_file())
+    return {"count": len(entries), "size": total_size, "path": PAGES_LIBRARY_DIR}
 
 
 def _copy_if_stale(src: Path, dest: Path) -> None:
@@ -897,6 +958,40 @@ if st.button("Save to library", type="primary", disabled=not can_save):
     st.caption(
         f"Library now holds {len(library_slugs())} song(s). "
         f"The player picks them up from `library/index.js` on next load."
+    )
+
+
+# ─── Publish Spotify library for GitHub Pages ────────────────────────────────
+
+st.divider()
+st.subheader("Publish Spotify library (for GitHub Pages)")
+st.caption(
+    "Writes `library/` at the repo root with every song that has a Spotify URI. "
+    "No audio is included — the hosted player streams via Spotify. Commit and "
+    "push `library/` to update the Pages site."
+)
+
+_pages_slugs_with_spotify = [
+    s for s in library_slugs()
+    if (load_song_record(s) or {}).get("spotify_track_uri", "")
+]
+st.caption(
+    f"{len(_pages_slugs_with_spotify)} of {len(library_slugs())} library song(s) "
+    f"have a Spotify URI."
+)
+
+if st.button("Publish Spotify library", disabled=not _pages_slugs_with_spotify):
+    stats = publish_spotify_library()
+    st.success(
+        f"Wrote {stats['count']} song(s) to `{stats['path']}/` "
+        f"({stats['size'] / 1024:.1f} KB total). "
+        "Commit and push to update GitHub Pages."
+    )
+    st.code(
+        "git add library && "
+        "git commit -m 'Beat Tapper: update published library' && "
+        "git push",
+        language="bash",
     )
 
 

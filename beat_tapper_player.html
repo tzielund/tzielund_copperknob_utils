@@ -686,7 +686,9 @@ async function CK_START(slug, data) {
   game.style.display = "block";
 
   // Pick a transport: Spotify if the song carries a URI AND we're signed in,
-  // otherwise fall back to the bundled audio.
+  // otherwise fall back to the bundled audio. A song published for Pages
+  // carries only a Spotify URI with no audio_b64 — if we can't sign in,
+  // we send the user back to the picker.
   if (transport) { try { transport.teardown(); } catch(e) {} transport = null; }
   const token = ckSpotifyToken();
   if (data.spotify_uri && token) {
@@ -694,14 +696,28 @@ async function CK_START(slug, data) {
       transport = new SpotifyTransport(data.spotify_uri, token, data.duration);
       await transport.init(data);
     } catch (e) {
-      console.warn("Spotify transport failed, falling back to audio:", e);
-      alert("Spotify playback couldn't start (" + e.message + ").\nFalling back to local audio.");
-      transport = new AudioTransport();
-      await transport.init(data);
+      console.warn("Spotify transport failed:", e);
+      if (data.audio_b64) {
+        alert("Spotify playback couldn't start (" + e.message + ").\nFalling back to local audio.");
+        transport = new AudioTransport();
+        await transport.init(data);
+      } else {
+        alert("Spotify playback couldn't start (" + e.message + ") and this song has no local audio.");
+        window.CK.returnToPicker();
+        return;
+      }
     }
-  } else {
+  } else if (data.audio_b64) {
     transport = new AudioTransport();
     await transport.init(data);
+  } else if (data.spotify_uri) {
+    alert("This song is Spotify-only. Please sign in to Spotify first.");
+    window.CK.returnToPicker();
+    return;
+  } else {
+    alert("This song has no playable audio source.");
+    window.CK.returnToPicker();
+    return;
   }
   transport.onEnded(finish);
 
