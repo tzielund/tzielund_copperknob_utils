@@ -756,9 +756,7 @@ class SpotifyTransport {
       ckSpLog("state_changed: pos=" + state.position + " paused=" + state.paused +
               " track=" + (state.track_window && state.track_window.current_track
                            ? state.track_window.current_track.uri : "(none)"));
-      this._posAnchor   = state.position;
-      this._posAnchorAt = performance.now();
-      this._playing     = !state.paused;
+      this._applyLocalPosition(state.position, !state.paused, performance.now());
     });
 
     const ready = new Promise((resolve, reject) => {
@@ -858,6 +856,23 @@ class SpotifyTransport {
     }
     this.player = null;
   }
+  // Same anchor-stability rule as the Connect transport: trust local
+  // extrapolation between ticks; only re-anchor when the state actually
+  // changes (play/pause) or when drift is seek-sized.
+  _applyLocalPosition(posMs, playing, now) {
+    const stateChanged = this._playing !== playing;
+    if (stateChanged || !playing) {
+      this._posAnchor   = posMs;
+      this._posAnchorAt = now;
+      this._playing     = playing;
+      return;
+    }
+    const extrapolated = this._posAnchor + (now - this._posAnchorAt);
+    if (Math.abs(posMs - extrapolated) > 1500) {
+      this._posAnchor   = posMs;
+      this._posAnchorAt = now;
+    }
+  }
   _startPolling() {
     this._stopPolling();
     this._endedFired = false;
@@ -866,9 +881,7 @@ class SpotifyTransport {
       let state;
       try { state = await this.player.getCurrentState(); } catch(e) { return; }
       if (state) {
-        this._posAnchor   = state.position;
-        this._posAnchorAt = performance.now();
-        this._playing     = !state.paused;
+        this._applyLocalPosition(state.position, !state.paused, performance.now());
       }
       if (!this._endedFired && this.duration &&
           this.currentTime() >= this.duration - 0.05) {
@@ -989,6 +1002,24 @@ class SpotifyConnectTransport {
       });
     } catch (e) {}
   }
+  // Re-anchor only on real state transitions or seek-sized drift. Trusting
+  // local extrapolation between polls keeps the pill fall smooth; snapping
+  // the anchor on every poll makes it jerk every second.
+  _applyServerPosition(serverMs, serverPlaying, now) {
+    const stateChanged = this._playing !== serverPlaying;
+    if (stateChanged || !serverPlaying) {
+      this._posAnchor   = serverMs;
+      this._posAnchorAt = now;
+      this._playing     = serverPlaying;
+      return;
+    }
+    const extrapolated = this._posAnchor + (now - this._posAnchorAt);
+    if (Math.abs(serverMs - extrapolated) > 1500) {
+      // Likely a seek on the remote device — snap.
+      this._posAnchor   = serverMs;
+      this._posAnchorAt = now;
+    }
+  }
   _startPolling() {
     this._stopPolling();
     this._endedFired = false;
@@ -1001,9 +1032,7 @@ class SpotifyConnectTransport {
         if (!resp.ok) return;
         const state = await resp.json();
         if (state && typeof state.progress_ms === "number") {
-          this._posAnchor   = state.progress_ms;
-          this._posAnchorAt = performance.now();
-          this._playing     = !!state.is_playing;
+          this._applyServerPosition(state.progress_ms, !!state.is_playing, performance.now());
         }
       } catch (e) {}
       if (!this._endedFired && this.duration &&
