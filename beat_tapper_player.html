@@ -59,6 +59,52 @@
   #spotify-bar button:hover { background: rgba(29,185,84,0.3); }
   #spotify-bar button.secondary { border-color: #334155; background: #1e293b; }
   #spotify-bar button.secondary:hover { background: #334155; }
+  #spotify-bar .sp-dev {
+    font-size: 11px; color: #86efac;
+    display: block; margin-top: 4px;
+  }
+
+  #sp-devpicker {
+    position: fixed; inset: 0; z-index: 100;
+    background: rgba(0,0,0,0.75);
+    display: none; align-items: center; justify-content: center;
+    padding: 20px;
+  }
+  #sp-devpicker.show { display: flex; }
+  #sp-devpicker .panel {
+    background: #111827; border: 1px solid #334155; border-radius: 14px;
+    padding: 20px; max-width: 480px; width: 100%;
+    max-height: 80vh; overflow: auto;
+    box-sizing: border-box;
+  }
+  #sp-devpicker h2 { margin: 0 0 6px; font-size: 18px; color: #e8ebf0; }
+  #sp-devpicker .hint { font-size: 12px; color: #94a3b8; margin-bottom: 14px; }
+  #sp-devpicker .dev-row {
+    display: block; width: 100%; text-align: left;
+    background: #1e293b; border: 1px solid #334155;
+    color: #e8ebf0; padding: 10px 14px; border-radius: 10px;
+    margin-bottom: 8px; cursor: pointer; font-family: inherit; font-size: 14px;
+    box-sizing: border-box;
+  }
+  #sp-devpicker .dev-row:hover { border-color: #38bdf8; background: #233245; }
+  #sp-devpicker .dev-row.selected {
+    border-color: #1DB954; background: rgba(29,185,84,0.15);
+  }
+  #sp-devpicker .dev-row .n { font-weight: 700; }
+  #sp-devpicker .dev-row .t { font-size: 12px; color: #94a3b8; margin-top: 2px; }
+  #sp-devpicker .btnrow {
+    display: flex; gap: 8px; margin-top: 12px;
+  }
+  #sp-devpicker .btnrow button {
+    flex: 1; padding: 10px; border-radius: 10px; font-family: inherit;
+    font-weight: 600; cursor: pointer; border: 1px solid #334155;
+    background: #1e293b; color: #e8ebf0;
+  }
+  #sp-devpicker pre.log {
+    background: #0a0f1a; border: 1px solid #1f2937; border-radius: 8px;
+    padding: 10px; font-size: 11px; color: #cbd5e1; white-space: pre-wrap;
+    word-break: break-word; max-height: 240px; overflow: auto; margin: 6px 0 0;
+  }
   .song-card .sp-tag {
     display: inline-block; margin-top: 6px;
     font-size: 11px; color: #86efac;
@@ -220,13 +266,51 @@
   <div class="tagline">Tap along to the beat. Pick a song to start.</div>
   <a class="xlink" href="beat_tapper_recorder.html">Fix wrong beats → Tap recorder</a>
   <div id="spotify-bar">
-    <span class="sp-status" id="sp_status">Spotify: not configured</span>
+    <span class="sp-status">
+      <span id="sp_status">Spotify: not configured</span>
+      <span class="sp-dev" id="sp_dev"></span>
+    </span>
     <button id="sp_signin" style="display:none">Sign in</button>
     <button id="sp_signout" class="secondary" style="display:none">Sign out</button>
-    <button id="sp_devices" class="secondary" style="display:none">Devices</button>
+    <button id="sp_device" class="secondary" style="display:none">Device</button>
+    <button id="sp_log" class="secondary" style="display:none">Log</button>
     <button id="sp_config" class="secondary">Settings</button>
   </div>
   <div id="picker-list"></div>
+</div>
+
+<!-- ─── Device picker modal ─────────────────────────────────────────────── -->
+<div id="sp-devpicker">
+  <div class="panel">
+    <h2 id="dp_title">Pick a Spotify playback device</h2>
+    <div class="hint" id="dp_hint">
+      Playback will happen on the device you pick. The "Browser (Web Playback SDK)"
+      option plays audio in this tab — but on some mobile browsers (notably Android
+      Chrome) the SDK never registers as a device. If so, pick your phone's Spotify
+      app or any other Connect device.
+    </div>
+    <div id="dp_list"></div>
+    <div class="btnrow">
+      <button id="dp_refresh">Refresh list</button>
+      <button id="dp_close">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Log modal ───────────────────────────────────────────────────────── -->
+<div id="sp-logmodal" style="position:fixed;inset:0;z-index:100;background:rgba(0,0,0,0.75);display:none;align-items:center;justify-content:center;padding:20px;">
+  <div class="panel" style="background:#111827;border:1px solid #334155;border-radius:14px;padding:20px;max-width:620px;width:100%;max-height:80vh;overflow:auto;box-sizing:border-box;">
+    <h2 style="margin:0 0 6px;font-size:18px;color:#e8ebf0;">Spotify debug log</h2>
+    <div style="font-size:12px;color:#94a3b8;margin-bottom:10px;">
+      Newest entries are at the bottom. Useful when the Web Playback SDK doesn't
+      register as a device.
+    </div>
+    <pre class="log" id="sp_log_text" style="background:#0a0f1a;border:1px solid #1f2937;border-radius:8px;padding:10px;font-size:11px;color:#cbd5e1;white-space:pre-wrap;word-break:break-word;max-height:50vh;overflow:auto;margin:0;">(empty)</pre>
+    <div style="display:flex;gap:8px;margin-top:12px;">
+      <button id="sp_log_clear" style="flex:1;padding:10px;border-radius:10px;font-family:inherit;font-weight:600;cursor:pointer;border:1px solid #334155;background:#1e293b;color:#e8ebf0;">Clear</button>
+      <button id="sp_log_close" style="flex:1;padding:10px;border-radius:10px;font-family:inherit;font-weight:600;cursor:pointer;border:1px solid #334155;background:#1e293b;color:#e8ebf0;">Close</button>
+    </div>
+  </div>
 </div>
 
 <!-- ─── Game (shown when a song is loaded) ──────────────────────────────── -->
@@ -301,10 +385,20 @@ const startBtn = document.getElementById("start");
 const summary  = document.getElementById("summary");
 const backBtn  = document.getElementById("back-to-picker");
 const spStatus  = document.getElementById("sp_status");
+const spDev     = document.getElementById("sp_dev");
 const spSignIn  = document.getElementById("sp_signin");
 const spSignOut = document.getElementById("sp_signout");
-const spDevices = document.getElementById("sp_devices");
+const spDevice  = document.getElementById("sp_device");
+const spLogBtn  = document.getElementById("sp_log");
 const spConfig  = document.getElementById("sp_config");
+const dpModal   = document.getElementById("sp-devpicker");
+const dpList    = document.getElementById("dp_list");
+const dpRefresh = document.getElementById("dp_refresh");
+const dpClose   = document.getElementById("dp_close");
+const logModal  = document.getElementById("sp-logmodal");
+const logText   = document.getElementById("sp_log_text");
+const logClear  = document.getElementById("sp_log_clear");
+const logClose  = document.getElementById("sp_log_close");
 
 // ─── Game state ──────────────────────────────────────────────────────────────
 let currentSong = null;         // {title, beats, intro_skip, outro_skip, ...}
@@ -432,51 +526,125 @@ async function ckSpotifyHandleCallback() {
   history.replaceState(null, "", url.pathname);
 }
 
+// ─── Preferred Spotify Connect device ────────────────────────────────────────
+// localStorage key stores either "sdk" (use the Web Playback SDK in this tab)
+// or an actual Spotify device_id (play on another Connect device).
+function ckSpotifyGetPreferredDevice() {
+  return localStorage.getItem("ck_spotify_preferred_device") || "sdk";
+}
+function ckSpotifyGetPreferredDeviceName() {
+  return localStorage.getItem("ck_spotify_preferred_device_name") || "";
+}
+function ckSpotifySetPreferredDevice(id, name) {
+  if (id) {
+    localStorage.setItem("ck_spotify_preferred_device", id);
+    localStorage.setItem("ck_spotify_preferred_device_name", name || "");
+  } else {
+    localStorage.removeItem("ck_spotify_preferred_device");
+    localStorage.removeItem("ck_spotify_preferred_device_name");
+  }
+  renderSpotifyBar();
+}
+
+// ─── Spotify debug log ───────────────────────────────────────────────────────
+const _ckSpLog = [];
+function ckSpLog(msg) {
+  const line = new Date().toISOString().slice(11,23) + "  " + msg;
+  _ckSpLog.push(line);
+  if (_ckSpLog.length > 200) _ckSpLog.shift();
+  console.log("[ck-sp]", msg);
+  if (logModal && logModal.style.display !== "none" && logText) {
+    logText.textContent = _ckSpLog.join("\n") || "(empty)";
+  }
+}
+function ckSpLogShow() {
+  if (!logText || !logModal) return;
+  logText.textContent = _ckSpLog.join("\n") || "(empty)";
+  logModal.style.display = "flex";
+}
+function ckSpLogHide() { if (logModal) logModal.style.display = "none"; }
+function ckSpLogClear() { _ckSpLog.length = 0; if (logText) logText.textContent = "(empty)"; }
+
 function renderSpotifyBar() {
   const hasId   = !!ckSpotifyClientId();
   const signed  = ckSpotifyIsSignedIn();
   if (!hasId) {
     spStatus.textContent = "Spotify: no client ID set (Settings to configure)";
-    spStatus.className   = "sp-status";
+    spStatus.parentElement.className = "sp-status";
     spSignIn.style.display   = "none";
     spSignOut.style.display  = "none";
-    spDevices.style.display  = "none";
+    spDevice.style.display   = "none";
+    spLogBtn.style.display   = "none";
+    spDev.textContent = "";
   } else if (signed) {
-    spStatus.textContent = "Spotify: signed in (songs with a Spotify URI will play via Spotify)";
-    spStatus.className   = "sp-status ok";
+    spStatus.textContent = "Spotify: signed in";
+    spStatus.parentElement.className = "sp-status ok";
     spSignIn.style.display   = "none";
     spSignOut.style.display  = "inline-block";
-    spDevices.style.display  = "inline-block";
+    spDevice.style.display   = "inline-block";
+    spLogBtn.style.display   = "inline-block";
+    const prefId   = ckSpotifyGetPreferredDevice();
+    const prefName = ckSpotifyGetPreferredDeviceName();
+    if (prefId === "sdk") {
+      spDev.textContent = "Playback: this browser (Web Playback SDK)";
+    } else {
+      spDev.textContent = "Playback: " + (prefName || prefId.slice(0,8)) + " (Spotify Connect)";
+    }
   } else {
     spStatus.textContent = "Spotify: tap Sign in to use a Premium account for playback";
-    spStatus.className   = "sp-status";
+    spStatus.parentElement.className = "sp-status";
     spSignIn.style.display   = "inline-block";
     spSignOut.style.display  = "none";
-    spDevices.style.display  = "none";
+    spDevice.style.display   = "none";
+    spLogBtn.style.display   = "none";
+    spDev.textContent = "";
   }
 }
 
-async function ckSpotifyShowDevices() {
+async function ckSpotifyFetchDevices() {
   const token = ckSpotifyToken();
-  if (!token) { alert("Not signed in."); return; }
-  try {
-    const resp = await fetch("https://api.spotify.com/v1/me/player/devices", {
-      headers: { "Authorization": "Bearer " + token },
-    });
-    if (!resp.ok) {
-      alert("Spotify devices lookup failed: " + resp.status + " " + (await resp.text()));
-      return;
-    }
-    const json = await resp.json();
-    const lines = (json.devices || []).map(
-      d => `${d.name} (${d.type}) ${d.is_active ? "[active] " : ""}${d.is_restricted ? "[restricted] " : ""}\n  id: ${d.id}`
-    );
-    alert("Spotify sees " + (json.devices || []).length + " device(s):\n\n" +
-          (lines.join("\n\n") || "(none)"));
-  } catch (e) {
-    alert("Error fetching devices: " + e.message);
+  if (!token) throw new Error("Not signed in");
+  const resp = await fetch("https://api.spotify.com/v1/me/player/devices", {
+    headers: { "Authorization": "Bearer " + token },
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error("Devices lookup failed: " + resp.status + " " + text);
   }
+  const json = await resp.json();
+  return json.devices || [];
 }
+
+async function ckSpotifyOpenDevicePicker() {
+  dpList.innerHTML = '<div class="hint">Loading…</div>';
+  dpModal.classList.add("show");
+  let devices;
+  try { devices = await ckSpotifyFetchDevices(); }
+  catch (e) {
+    dpList.innerHTML = '<div class="hint" style="color:#f87171">' + esc(e.message) + '</div>';
+    return;
+  }
+  const prefId = ckSpotifyGetPreferredDevice();
+  const rows = [];
+  // Always offer the SDK (this-browser) option first.
+  rows.push({ id: "sdk", name: "Browser (Web Playback SDK)", type: "this tab" });
+  for (const d of devices) rows.push({ id: d.id, name: d.name, type: d.type, active: d.is_active, restricted: d.is_restricted });
+
+  dpList.innerHTML = rows.map(r => `
+    <button class="dev-row${r.id === prefId ? " selected" : ""}" data-id="${esc(r.id)}" data-name="${esc(r.name)}">
+      <div class="n">${esc(r.name)}${r.active ? " · active" : ""}${r.restricted ? " · restricted" : ""}</div>
+      <div class="t">${esc(r.type)}${r.id === "sdk" ? "" : " · " + esc(r.id.slice(0,8)) + "…"}</div>
+    </button>
+  `).join("");
+  dpList.querySelectorAll(".dev-row").forEach(el => {
+    el.addEventListener("click", () => {
+      ckSpotifySetPreferredDevice(el.dataset.id, el.dataset.name);
+      dpModal.classList.remove("show");
+    });
+  });
+}
+
+function ckSpotifyCloseDevicePicker() { dpModal.classList.remove("show"); }
 
 function ckSpotifyConfigure() {
   const cur = ckSpotifyClientId();
@@ -555,25 +723,39 @@ class SpotifyTransport {
     this._endedFired = false;
   }
   async init(data) {
+    ckSpLog("SDK init: loading player script");
+    spStatus.textContent = "Spotify: loading SDK…";
     await ckSpotifyEnsureSdkLoaded();
+    ckSpLog("SDK init: script loaded, Spotify.Player=" + (!!window.Spotify && !!window.Spotify.Player));
     this.player = new Spotify.Player({
       name:          "Beat Tapper",
       getOAuthToken: (cb) => cb(this.token),
       volume:        0.8,
     });
-    this.player.addListener("initialization_error", ({message}) => console.error("init_error:", message));
+    this.player.addListener("initialization_error", ({message}) => {
+      ckSpLog("initialization_error: " + message);
+      spStatus.textContent = "Spotify: init error — " + message;
+    });
     this.player.addListener("authentication_error", ({message}) => {
-      console.error("auth_error:", message);
+      ckSpLog("authentication_error: " + message);
       alert("Spotify auth expired. Please sign in again.");
     });
     this.player.addListener("account_error", ({message}) => {
-      console.error("account_error:", message);
+      ckSpLog("account_error: " + message);
       alert("Spotify account error: " + message +
             "\n(The Web Playback SDK requires Spotify Premium.)");
     });
-    this.player.addListener("playback_error", ({message}) => console.error("playback_error:", message));
+    this.player.addListener("playback_error", ({message}) => {
+      ckSpLog("playback_error: " + message);
+    });
+    this.player.addListener("autoplay_failed", () => {
+      ckSpLog("autoplay_failed (browser blocked playback without a gesture)");
+    });
     this.player.addListener("player_state_changed", (state) => {
-      if (!state) return;
+      if (!state) { ckSpLog("state_changed: null"); return; }
+      ckSpLog("state_changed: pos=" + state.position + " paused=" + state.paused +
+              " track=" + (state.track_window && state.track_window.current_track
+                           ? state.track_window.current_track.uri : "(none)"));
       this._posAnchor   = state.position;
       this._posAnchorAt = performance.now();
       this._playing     = !state.paused;
@@ -582,17 +764,22 @@ class SpotifyTransport {
     const ready = new Promise((resolve, reject) => {
       this.player.addListener("ready", ({device_id}) => {
         this.deviceId = device_id;
-        console.log("Spotify SDK ready, device_id:", device_id);
+        ckSpLog("ready: device_id=" + device_id);
         resolve();
       });
       this.player.addListener("not_ready", ({device_id}) => {
-        console.warn("Spotify SDK not_ready, device_id:", device_id);
+        ckSpLog("not_ready: device_id=" + device_id);
       });
-      setTimeout(() => reject(new Error("Spotify player timed out connecting.")), 10_000);
+      setTimeout(() => reject(new Error("Timed out waiting for SDK ready event (20s). Tap Log for details.")), 20_000);
     });
+    ckSpLog("SDK init: calling player.connect()");
+    spStatus.textContent = "Spotify: connecting SDK…";
     const ok = await this.player.connect();
-    if (!ok) throw new Error("Spotify player.connect() failed.");
+    ckSpLog("SDK init: player.connect() resolved: " + ok);
+    if (!ok) throw new Error("Spotify player.connect() returned false.");
+    spStatus.textContent = "Spotify: waiting for device to register…";
     await ready;
+    spStatus.textContent = "Spotify: SDK ready";
   }
   async play() {
     // Mobile browsers (iOS Safari especially) require activateElement() to be
@@ -696,6 +883,142 @@ class SpotifyTransport {
   get kind() { return "spotify"; }
 }
 
+// Spotify Connect transport: play on an external Connect device (phone app,
+// desktop app, speaker) and poll /me/player for position. Used when the user
+// picks a non-SDK device from the Device picker — e.g. because the Web
+// Playback SDK isn't registering on this browser (common on Android Chrome).
+class SpotifyConnectTransport {
+  constructor(trackUri, token, duration, deviceId, deviceName) {
+    this.trackUri    = trackUri;
+    this.token       = token;
+    this.duration    = duration;
+    this.deviceId    = deviceId;
+    this.deviceName  = deviceName || "";
+    this._posAnchor  = 0;
+    this._posAnchorAt= 0;
+    this._playing    = false;
+    this._pollId     = null;
+    this._endedCb    = null;
+    this._endedFired = false;
+  }
+  async init() {
+    ckSpLog("connect init: target device " + (this.deviceName || this.deviceId.slice(0,8)));
+    // Verify the target device is still in the list so we can give a decent
+    // error before Start is tapped.
+    const devices = await ckSpotifyFetchDevices();
+    const found = devices.find(d => d.id === this.deviceId);
+    if (!found) {
+      throw new Error("Chosen device isn't in the Spotify Connect list anymore. " +
+                      "Open Spotify on that device, then re-pick in Device.");
+    }
+    ckSpLog("connect init: device present (active=" + found.is_active + ")");
+  }
+  async play() {
+    ckSpLog("connect play: transferring playback to device");
+    // Transfer playback first (Spotify sometimes 404s /play against an
+    // "inactive" device even when it's in the devices list).
+    try {
+      await fetch("https://api.spotify.com/v1/me/player", {
+        method:  "PUT",
+        headers: {
+          "Authorization": "Bearer " + this.token,
+          "Content-Type":  "application/json",
+        },
+        body: JSON.stringify({ device_ids: [this.deviceId], play: false }),
+      });
+      await new Promise(r => setTimeout(r, 600));
+    } catch (e) { ckSpLog("connect transfer failed: " + e.message); }
+
+    ckSpLog("connect play: PUT /me/player/play");
+    const resp = await fetch(
+      "https://api.spotify.com/v1/me/player/play?device_id=" + encodeURIComponent(this.deviceId),
+      {
+        method:  "PUT",
+        headers: {
+          "Authorization": "Bearer " + this.token,
+          "Content-Type":  "application/json",
+        },
+        body: JSON.stringify({ uris: [this.trackUri], position_ms: 0 }),
+      }
+    );
+    if (!resp.ok) {
+      const text = await resp.text();
+      ckSpLog("connect play failed: " + resp.status + " " + text);
+      throw new Error("Spotify Connect play failed: " + resp.status + " " + text);
+    }
+    this._posAnchor   = 0;
+    this._posAnchorAt = performance.now();
+    this._playing     = true;
+    this._startPolling();
+  }
+  async pause() {
+    this._stopPolling();
+    try {
+      await fetch("https://api.spotify.com/v1/me/player/pause?device_id=" + encodeURIComponent(this.deviceId), {
+        method: "PUT",
+        headers: { "Authorization": "Bearer " + this.token },
+      });
+    } catch (e) { ckSpLog("connect pause failed: " + e.message); }
+    this._playing = false;
+  }
+  async seek(t) {
+    const ms = Math.round(t * 1000);
+    try {
+      await fetch("https://api.spotify.com/v1/me/player/seek?position_ms=" + ms +
+                  "&device_id=" + encodeURIComponent(this.deviceId), {
+        method: "PUT",
+        headers: { "Authorization": "Bearer " + this.token },
+      });
+    } catch (e) { ckSpLog("connect seek failed: " + e.message); }
+    this._posAnchor   = ms;
+    this._posAnchorAt = performance.now();
+  }
+  currentTime() {
+    if (!this._playing) return this._posAnchor / 1000;
+    const elapsed = performance.now() - this._posAnchorAt;
+    return (this._posAnchor + elapsed) / 1000;
+  }
+  onEnded(cb) { this._endedCb = cb; }
+  teardown() {
+    this._stopPolling();
+    // Best-effort pause on the remote device
+    try {
+      fetch("https://api.spotify.com/v1/me/player/pause", {
+        method: "PUT",
+        headers: { "Authorization": "Bearer " + this.token },
+      });
+    } catch (e) {}
+  }
+  _startPolling() {
+    this._stopPolling();
+    this._endedFired = false;
+    this._pollId = setInterval(async () => {
+      try {
+        const resp = await fetch("https://api.spotify.com/v1/me/player", {
+          headers: { "Authorization": "Bearer " + this.token },
+        });
+        if (resp.status === 204) return;  // no active playback context yet
+        if (!resp.ok) return;
+        const state = await resp.json();
+        if (state && typeof state.progress_ms === "number") {
+          this._posAnchor   = state.progress_ms;
+          this._posAnchorAt = performance.now();
+          this._playing     = !!state.is_playing;
+        }
+      } catch (e) {}
+      if (!this._endedFired && this.duration &&
+          this.currentTime() >= this.duration - 0.05) {
+        this._endedFired = true;
+        if (this._endedCb) this._endedCb();
+      }
+    }, 1000);
+  }
+  _stopPolling() {
+    if (this._pollId) { clearInterval(this._pollId); this._pollId = null; }
+  }
+  get kind() { return "spotify-connect"; }
+}
+
 // ─── Picker ──────────────────────────────────────────────────────────────────
 function esc(s) {
   return String(s == null ? "" : s).replace(/[<>&"]/g, c =>
@@ -765,17 +1088,25 @@ async function CK_START(slug, data) {
   if (transport) { try { transport.teardown(); } catch(e) {} transport = null; }
   const token = ckSpotifyToken();
   if (data.spotify_uri && token) {
+    const prefId   = ckSpotifyGetPreferredDevice();
+    const prefName = ckSpotifyGetPreferredDeviceName();
     try {
-      transport = new SpotifyTransport(data.spotify_uri, token, data.duration);
+      if (prefId === "sdk") {
+        transport = new SpotifyTransport(data.spotify_uri, token, data.duration);
+      } else {
+        transport = new SpotifyConnectTransport(data.spotify_uri, token, data.duration, prefId, prefName);
+      }
       await transport.init(data);
     } catch (e) {
-      console.warn("Spotify transport failed:", e);
+      ckSpLog("transport init failed: " + e.message);
       if (data.audio_b64) {
         alert("Spotify playback couldn't start (" + e.message + ").\nFalling back to local audio.");
         transport = new AudioTransport();
         await transport.init(data);
       } else {
-        alert("Spotify playback couldn't start (" + e.message + ") and this song has no local audio.");
+        alert("Spotify playback couldn't start:\n" + e.message +
+              "\n\nIf the Web Playback SDK won't register, open Device and pick " +
+              "another Connect device (e.g. your phone's Spotify app).");
         window.CK.returnToPicker();
         return;
       }
@@ -796,7 +1127,11 @@ async function CK_START(slug, data) {
 
   const sourceEl = document.getElementById("i_source");
   if (transport.kind === "spotify") {
-    sourceEl.textContent = "Source: Spotify";
+    sourceEl.textContent = "Source: Spotify (this browser)";
+    sourceEl.className   = "source spotify";
+  } else if (transport.kind === "spotify-connect") {
+    sourceEl.textContent = "Source: Spotify Connect → " +
+      (transport.deviceName || transport.deviceId.slice(0,8));
     sourceEl.className   = "source spotify";
   } else {
     sourceEl.textContent = "Source: local audio";
@@ -1094,8 +1429,13 @@ game.addEventListener("contextmenu", (e) => { e.preventDefault(); });
 // ─── Spotify-bar wiring ──────────────────────────────────────────────────────
 spSignIn.addEventListener("click",  () => ckSpotifyStartLogin());
 spSignOut.addEventListener("click", () => ckSpotifySignOut());
-spDevices.addEventListener("click", () => ckSpotifyShowDevices());
+spDevice.addEventListener("click",  () => ckSpotifyOpenDevicePicker());
+spLogBtn.addEventListener("click",  () => ckSpLogShow());
 spConfig.addEventListener("click",  () => ckSpotifyConfigure());
+dpRefresh.addEventListener("click", () => ckSpotifyOpenDevicePicker());
+dpClose.addEventListener("click",   () => ckSpotifyCloseDevicePicker());
+logClear.addEventListener("click",  () => ckSpLogClear());
+logClose.addEventListener("click",  () => ckSpLogHide());
 
 // ─── Load library index ──────────────────────────────────────────────────────
 // In bundled mode (phone build), the HTML provides window.CK_SONGS and
