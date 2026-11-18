@@ -322,7 +322,13 @@ let started  = false;
 let transport = null;       // AudioTransport or SpotifyTransport — set in CK_START
 
 // ─── Spotify auth (PKCE, no secret) ──────────────────────────────────────────
-const SPOTIFY_SCOPES = "streaming user-read-email user-read-private";
+const SPOTIFY_SCOPES = [
+  "streaming",
+  "user-read-email",
+  "user-read-private",
+  "user-read-playback-state",
+  "user-modify-playback-state",
+].join(" ");
 
 function ckSpotifyClientId() {
   return localStorage.getItem("ck_spotify_client_id") || "";
