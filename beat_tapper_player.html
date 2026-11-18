@@ -223,6 +223,7 @@
     <span class="sp-status" id="sp_status">Spotify: not configured</span>
     <button id="sp_signin" style="display:none">Sign in</button>
     <button id="sp_signout" class="secondary" style="display:none">Sign out</button>
+    <button id="sp_devices" class="secondary" style="display:none">Devices</button>
     <button id="sp_config" class="secondary">Settings</button>
   </div>
   <div id="picker-list"></div>
@@ -299,10 +300,11 @@ const feedback = document.getElementById("feedback");
 const startBtn = document.getElementById("start");
 const summary  = document.getElementById("summary");
 const backBtn  = document.getElementById("back-to-picker");
-const spStatus = document.getElementById("sp_status");
-const spSignIn = document.getElementById("sp_signin");
-const spSignOut= document.getElementById("sp_signout");
-const spConfig = document.getElementById("sp_config");
+const spStatus  = document.getElementById("sp_status");
+const spSignIn  = document.getElementById("sp_signin");
+const spSignOut = document.getElementById("sp_signout");
+const spDevices = document.getElementById("sp_devices");
+const spConfig  = document.getElementById("sp_config");
 
 // ─── Game state ──────────────────────────────────────────────────────────────
 let currentSong = null;         // {title, beats, intro_skip, outro_skip, ...}
@@ -431,13 +433,37 @@ function renderSpotifyBar() {
   } else if (signed) {
     spStatus.textContent = "Spotify: signed in (songs with a Spotify URI will play via Spotify)";
     spStatus.className   = "sp-status ok";
-    spSignIn.style.display  = "none";
-    spSignOut.style.display = "inline-block";
+    spSignIn.style.display   = "none";
+    spSignOut.style.display  = "inline-block";
+    spDevices.style.display  = "inline-block";
   } else {
     spStatus.textContent = "Spotify: configured, not signed in";
     spStatus.className   = "sp-status";
-    spSignIn.style.display  = "inline-block";
-    spSignOut.style.display = "none";
+    spSignIn.style.display   = "inline-block";
+    spSignOut.style.display  = "none";
+    spDevices.style.display  = "none";
+  }
+}
+
+async function ckSpotifyShowDevices() {
+  const token = ckSpotifyToken();
+  if (!token) { alert("Not signed in."); return; }
+  try {
+    const resp = await fetch("https://api.spotify.com/v1/me/player/devices", {
+      headers: { "Authorization": "Bearer " + token },
+    });
+    if (!resp.ok) {
+      alert("Spotify devices lookup failed: " + resp.status + " " + (await resp.text()));
+      return;
+    }
+    const json = await resp.json();
+    const lines = (json.devices || []).map(
+      d => `${d.name} (${d.type}) ${d.is_active ? "[active] " : ""}${d.is_restricted ? "[restricted] " : ""}\n  id: ${d.id}`
+    );
+    alert("Spotify sees " + (json.devices || []).length + " device(s):\n\n" +
+          (lines.join("\n\n") || "(none)"));
+  } catch (e) {
+    alert("Error fetching devices: " + e.message);
   }
 }
 
@@ -545,7 +571,11 @@ class SpotifyTransport {
     const ready = new Promise((resolve, reject) => {
       this.player.addListener("ready", ({device_id}) => {
         this.deviceId = device_id;
+        console.log("Spotify SDK ready, device_id:", device_id);
         resolve();
+      });
+      this.player.addListener("not_ready", ({device_id}) => {
+        console.warn("Spotify SDK not_ready, device_id:", device_id);
       });
       setTimeout(() => reject(new Error("Spotify player timed out connecting.")), 10_000);
     });
@@ -1053,6 +1083,7 @@ game.addEventListener("contextmenu", (e) => { e.preventDefault(); });
 // ─── Spotify-bar wiring ──────────────────────────────────────────────────────
 spSignIn.addEventListener("click",  () => ckSpotifyStartLogin());
 spSignOut.addEventListener("click", () => ckSpotifySignOut());
+spDevices.addEventListener("click", () => ckSpotifyShowDevices());
 spConfig.addEventListener("click",  () => ckSpotifyConfigure());
 
 // ─── Load library index ──────────────────────────────────────────────────────
