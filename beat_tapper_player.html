@@ -322,6 +322,10 @@ let started  = false;
 let transport = null;       // AudioTransport or SpotifyTransport — set in CK_START
 
 // ─── Spotify auth (PKCE, no secret) ──────────────────────────────────────────
+// Client ID is public (PKCE uses no secret). Baked-in default works out of the
+// box; Settings can override via localStorage for local dev against a
+// different Spotify app.
+const SPOTIFY_DEFAULT_CLIENT_ID = "9e74c20556764e75a7d7393fa2e775ec";
 const SPOTIFY_SCOPES = [
   "streaming",
   "user-read-email",
@@ -331,7 +335,7 @@ const SPOTIFY_SCOPES = [
 ].join(" ");
 
 function ckSpotifyClientId() {
-  return localStorage.getItem("ck_spotify_client_id") || "";
+  return localStorage.getItem("ck_spotify_client_id") || SPOTIFY_DEFAULT_CLIENT_ID;
 }
 function ckSpotifyToken() {
   const token = localStorage.getItem("ck_spotify_access_token");
@@ -432,10 +436,11 @@ function renderSpotifyBar() {
   const hasId   = !!ckSpotifyClientId();
   const signed  = ckSpotifyIsSignedIn();
   if (!hasId) {
-    spStatus.textContent = "Spotify: not configured";
+    spStatus.textContent = "Spotify: no client ID set (Settings to configure)";
     spStatus.className   = "sp-status";
-    spSignIn.style.display  = "none";
-    spSignOut.style.display = "none";
+    spSignIn.style.display   = "none";
+    spSignOut.style.display  = "none";
+    spDevices.style.display  = "none";
   } else if (signed) {
     spStatus.textContent = "Spotify: signed in (songs with a Spotify URI will play via Spotify)";
     spStatus.className   = "sp-status ok";
@@ -443,7 +448,7 @@ function renderSpotifyBar() {
     spSignOut.style.display  = "inline-block";
     spDevices.style.display  = "inline-block";
   } else {
-    spStatus.textContent = "Spotify: configured, not signed in";
+    spStatus.textContent = "Spotify: tap Sign in to use a Premium account for playback";
     spStatus.className   = "sp-status";
     spSignIn.style.display   = "inline-block";
     spSignOut.style.display  = "none";
