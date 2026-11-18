@@ -554,7 +554,13 @@ class SpotifyTransport {
     await ready;
   }
   async play() {
-    const resp = await fetch(
+    // Mobile browsers (iOS Safari especially) require activateElement() to be
+    // called from a user gesture before the SDK can start playing. We're
+    // reached from the Start button handler, so this call is inside a gesture.
+    if (this.player && typeof this.player.activateElement === "function") {
+      try { await this.player.activateElement(); } catch(e) { console.warn("activateElement:", e); }
+    }
+    let resp = await fetch(
       "https://api.spotify.com/v1/me/player/play?device_id=" + encodeURIComponent(this.deviceId),
       {
         method:  "PUT",
@@ -565,6 +571,32 @@ class SpotifyTransport {
         body: JSON.stringify({ uris: [this.trackUri], position_ms: 0 }),
       }
     );
+    if (resp.status === 404) {
+      // Device not registered yet on Spotify's side — nudge Connect to transfer
+      // playback to us, then retry /play once.
+      try {
+        await fetch("https://api.spotify.com/v1/me/player", {
+          method:  "PUT",
+          headers: {
+            "Authorization": "Bearer " + this.token,
+            "Content-Type":  "application/json",
+          },
+          body: JSON.stringify({ device_ids: [this.deviceId], play: false }),
+        });
+        await new Promise(r => setTimeout(r, 400));
+      } catch(e) { console.warn("transfer-playback:", e); }
+      resp = await fetch(
+        "https://api.spotify.com/v1/me/player/play?device_id=" + encodeURIComponent(this.deviceId),
+        {
+          method:  "PUT",
+          headers: {
+            "Authorization": "Bearer " + this.token,
+            "Content-Type":  "application/json",
+          },
+          body: JSON.stringify({ uris: [this.trackUri], position_ms: 0 }),
+        }
+      );
+    }
     if (!resp.ok) {
       const text = await resp.text();
       throw new Error("Spotify play failed: " + resp.status + " " + text);
