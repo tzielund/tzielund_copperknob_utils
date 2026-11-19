@@ -59,6 +59,25 @@
   #spotify-bar button:hover { background: rgba(29,185,84,0.3); }
   #spotify-bar button.secondary { border-color: #334155; background: #1e293b; }
   #spotify-bar button.secondary:hover { background: #334155; }
+
+  #steps-bar {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 20px; padding: 10px 16px;
+    background: rgba(244,114,182,0.08);
+    border: 1px solid rgba(244,114,182,0.3);
+    border-radius: 12px;
+    font-size: 13px;
+    max-width: 980px; width: 100%;
+    box-sizing: border-box;
+  }
+  #steps-bar .st-status { color: #94a3b8; flex: 1; }
+  #steps-bar .st-status.ok { color: #f472b6; }
+  #steps-bar button {
+    cursor: pointer; border: 1px solid rgba(244,114,182,0.5);
+    background: rgba(244,114,182,0.15); color: #e8ebf0;
+    padding: 6px 12px; border-radius: 8px; font-size: 12px; font-weight: 600;
+  }
+  #steps-bar button:hover { background: rgba(244,114,182,0.3); }
   #spotify-bar .sp-dev {
     font-size: 11px; color: #86efac;
     display: block; margin-top: 4px;
@@ -229,6 +248,37 @@
   .latrow .latbtn:hover { background: #233245; border-color: #38bdf8; }
   .latrow #lat_val { min-width: 60px; text-align: center; color: #e8ebf0; font-weight: 700; }
 
+  .steprow {
+    display: none; align-items: center; gap: 8px;
+    font-size: 13px; color: #94a3b8;
+    margin-top: 8px;
+  }
+  .steprow.show { display: flex; }
+  .steprow .meter {
+    position: relative; flex: 1; height: 10px; min-width: 60px;
+    background: #1e293b; border: 1px solid #334155; border-radius: 6px; overflow: hidden;
+  }
+  .steprow .fill {
+    position: absolute; left: 0; top: 0; bottom: 0; width: 0;
+    background: #f472b6; transition: width 0.05s linear;
+  }
+  .steprow .thresh {
+    position: absolute; top: -2px; bottom: -2px; width: 2px;
+    background: #fbbf24;
+  }
+  .steprow .dot {
+    width: 14px; height: 14px; border-radius: 50%;
+    background: #334155; border: 1px solid #475569;
+    transition: background 0.1s, transform 0.1s;
+  }
+  .steprow .dot.flash { background: #f472b6; transform: scale(1.4); }
+  .steprow .stbtn {
+    cursor: pointer; border: 1px solid #334155; background: #1e293b;
+    color: #e8ebf0; padding: 4px 10px; border-radius: 8px;
+    font-family: inherit; font-size: 12px; font-weight: 600; min-width: 44px;
+  }
+  .steprow .stbtn:hover { background: #233245; border-color: #f472b6; }
+
   #feedback {
     position: absolute; left: 50%;
     transform: translateX(-50%);
@@ -289,6 +339,10 @@
     <button id="sp_device" class="secondary" style="display:none">Device</button>
     <button id="sp_log" class="secondary" style="display:none">Log</button>
     <button id="sp_config" class="secondary">Settings</button>
+  </div>
+  <div id="steps-bar">
+    <span class="st-status" id="st_status">Steps: off (tap to try accelerometer input)</span>
+    <button id="st_toggle">Enable</button>
   </div>
   <div id="picker-list"></div>
 </div>
@@ -351,6 +405,14 @@
       <span id="lat_val">0ms</span>
       <button class="latbtn" id="lat_inc">+50</button>
       <span style="font-size:11px;color:#64748b;">(positive = game runs ahead of music)</span>
+    </div>
+    <div class="steprow" id="step_row">
+      <span>Steps:</span>
+      <span class="dot" id="step_dot"></span>
+      <div class="meter"><div class="fill" id="step_fill"></div><div class="thresh" id="step_thresh"></div></div>
+      <button class="stbtn" id="step_dec">less</button>
+      <span id="step_val">1.5</span>
+      <button class="stbtn" id="step_inc">more</button>
     </div>
     <div id="i_skip" class="skipnote" style="display:none"></div>
     <div class="hint">
@@ -566,6 +628,134 @@ function ckSpotifySetPreferredDevice(id, name) {
     localStorage.removeItem("ck_spotify_preferred_device_name");
   }
   renderSpotifyBar();
+}
+
+// ─── Accelerometer-based step detection (experimental) ──────────────────────
+// Listens to devicemotion, band-passes the acceleration magnitude, and fires
+// a step event when the filtered signal rises past a tunable threshold (with
+// a refractory window to prevent double-counting one impact). Each detected
+// step triggers the same tap path as SPACE / touch, so scoring flows through
+// the normal code.
+const STEP_REFRACTORY_MS = 200;
+const STEP_LPF           = 0.30;   // fast envelope
+const STEP_HPF           = 0.98;   // DC removal (keeps high-freq shocks)
+const stepState = {
+  active:    false,
+  threshold: parseFloat(localStorage.getItem("ck_step_threshold") || "1.5"),
+  env:       0,     // filtered envelope value
+  prev:      0,     // previous envelope (for rising-edge detection)
+  dcX: 0, dcY: 0, dcZ: 0,
+  lastStepAt: 0,
+  count:     0,
+};
+function ckStepsSaveThreshold() {
+  localStorage.setItem("ck_step_threshold", String(stepState.threshold));
+}
+function ckStepsAdjustThreshold(delta) {
+  stepState.threshold = Math.max(0.3, Math.min(10, +(stepState.threshold + delta).toFixed(2)));
+  ckStepsSaveThreshold();
+  refreshStepDisplay();
+}
+async function ckStepsEnable() {
+  if (stepState.active) return;
+  // iOS 13+ requires an explicit permission grant from a user gesture.
+  if (typeof DeviceMotionEvent !== "undefined" &&
+      typeof DeviceMotionEvent.requestPermission === "function") {
+    try {
+      const resp = await DeviceMotionEvent.requestPermission();
+      if (resp !== "granted") {
+        alert("Motion permission denied — step detection won't work.");
+        return;
+      }
+    } catch (e) {
+      alert("Could not request motion permission: " + e.message);
+      return;
+    }
+  }
+  window.addEventListener("devicemotion", onDeviceMotion);
+  stepState.active = true;
+  renderStepsBar();
+  refreshStepDisplay();
+}
+function ckStepsDisable() {
+  window.removeEventListener("devicemotion", onDeviceMotion);
+  stepState.active = false;
+  renderStepsBar();
+}
+function ckStepsToggle() {
+  if (stepState.active) ckStepsDisable();
+  else ckStepsEnable();
+}
+function renderStepsBar() {
+  const status = document.getElementById("st_status");
+  const btn    = document.getElementById("st_toggle");
+  if (stepState.active) {
+    status.textContent = "Steps: on — accelerometer taps are enabled during gameplay";
+    status.className   = "st-status ok";
+    btn.textContent    = "Disable";
+  } else {
+    status.textContent = "Steps: off (tap to try accelerometer input)";
+    status.className   = "st-status";
+    btn.textContent    = "Enable";
+  }
+}
+function onDeviceMotion(e) {
+  // Prefer gravity-free acceleration when the platform provides it (iOS
+  // and most Androids do). Fall back to accelerationIncludingGravity and
+  // remove gravity with a slow high-pass.
+  let ax = 0, ay = 0, az = 0;
+  const a = e.acceleration;
+  if (a && (a.x != null || a.y != null || a.z != null)) {
+    ax = a.x || 0; ay = a.y || 0; az = a.z || 0;
+  } else {
+    const ag = e.accelerationIncludingGravity;
+    if (!ag) return;
+    // Slow DC estimate of gravity on each axis, then subtract.
+    stepState.dcX = stepState.dcX * STEP_HPF + (ag.x || 0) * (1 - STEP_HPF);
+    stepState.dcY = stepState.dcY * STEP_HPF + (ag.y || 0) * (1 - STEP_HPF);
+    stepState.dcZ = stepState.dcZ * STEP_HPF + (ag.z || 0) * (1 - STEP_HPF);
+    ax = (ag.x || 0) - stepState.dcX;
+    ay = (ag.y || 0) - stepState.dcY;
+    az = (ag.z || 0) - stepState.dcZ;
+  }
+  const mag = Math.sqrt(ax*ax + ay*ay + az*az);
+  stepState.env = stepState.env * (1 - STEP_LPF) + mag * STEP_LPF;
+
+  // Update meter (throttled by CSS transition)
+  const fill = document.getElementById("step_fill");
+  if (fill) {
+    const pct = Math.min(100, (stepState.env / 6) * 100);
+    fill.style.width = pct + "%";
+  }
+
+  const now = performance.now();
+  if (stepState.env > stepState.threshold &&
+      stepState.prev <= stepState.threshold &&
+      now - stepState.lastStepAt > STEP_REFRACTORY_MS) {
+    stepState.lastStepAt = now;
+    stepState.count += 1;
+    onStepDetected();
+  }
+  stepState.prev = stepState.env;
+}
+function onStepDetected() {
+  // Visual ping
+  const dot = document.getElementById("step_dot");
+  if (dot) {
+    dot.classList.remove("flash");
+    void dot.offsetWidth;  // restart animation
+    dot.classList.add("flash");
+  }
+  if (typeof started !== "undefined" && typeof finished !== "undefined" &&
+      started && !finished) {
+    tap(false);
+  }
+}
+function refreshStepDisplay() {
+  const val = document.getElementById("step_val");
+  const th  = document.getElementById("step_thresh");
+  if (val) val.textContent = stepState.threshold.toFixed(1);
+  if (th)  th.style.left = Math.min(100, (stepState.threshold / 6) * 100) + "%";
 }
 
 // ─── Audio-offset calibration (per device / per SDK) ────────────────────────
@@ -1271,6 +1461,14 @@ async function CK_START(slug, data) {
   } else {
     latRow.classList.remove("show");
   }
+  // Steps widget — only shown when the detector is on.
+  const stepRow = document.getElementById("step_row");
+  if (stepState.active) {
+    stepRow.classList.add("show");
+    refreshStepDisplay();
+  } else {
+    stepRow.classList.remove("show");
+  }
 
   document.getElementById("i_title").textContent = data.title;
   document.getElementById("i_meta").textContent =
@@ -1591,6 +1789,13 @@ game.addEventListener("pointerdown", (e) => {
 });
 // Suppress the default context menu inside the game so right-click can be used for phrase taps.
 game.addEventListener("contextmenu", (e) => { e.preventDefault(); });
+
+// ─── Steps wiring ────────────────────────────────────────────────────────────
+document.getElementById("st_toggle").addEventListener("click", () => ckStepsToggle());
+document.getElementById("step_dec").addEventListener("click", () => ckStepsAdjustThreshold(-0.2));
+document.getElementById("step_inc").addEventListener("click", () => ckStepsAdjustThreshold(+0.2));
+renderStepsBar();
+refreshStepDisplay();
 
 // ─── Latency HUD wiring ──────────────────────────────────────────────────────
 function refreshLatencyDisplay() {
