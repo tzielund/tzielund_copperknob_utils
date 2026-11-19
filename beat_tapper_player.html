@@ -827,9 +827,13 @@ class SpotifyTransport {
       const text = await resp.text();
       throw new Error("Spotify play failed: " + resp.status + " " + text);
     }
+    // Leave _playing=false so the first player_state_changed / poll with
+    // paused=false counts as a real state transition and re-anchors from
+    // the SDK's reported position (which reflects when audio actually
+    // started, not when the PUT /play response came back).
     this._posAnchor   = 0;
     this._posAnchorAt = performance.now();
-    this._playing     = true;
+    this._playing     = false;
     this._startPolling();
   }
   async pause() {
@@ -959,9 +963,50 @@ class SpotifyConnectTransport {
       ckSpLog("connect play failed: " + resp.status + " " + text);
       throw new Error("Spotify Connect play failed: " + resp.status + " " + text);
     }
+
+    // The server returns from /play as soon as it has queued the command, but
+    // the device still has to transfer, buffer and begin audio — typically
+    // ~500-1000ms. Anchoring to performance.now() right now would run the
+    // game clock that much ahead of the music. Poll until the device reports
+    // it's actually playing, then anchor to that reported position (plus
+    // half the round-trip, so the anchor matches the music at t1).
+    ckSpLog("connect play: waiting for audio to start on device");
+    this._playing = false;
     this._posAnchor   = 0;
     this._posAnchorAt = performance.now();
-    this._playing     = true;
+    let anchored = false;
+    for (let i = 0; i < 25; i++) {
+      await new Promise(r => setTimeout(r, 120));
+      const t0 = performance.now();
+      let pollResp;
+      try {
+        pollResp = await fetch("https://api.spotify.com/v1/me/player", {
+          headers: { "Authorization": "Bearer " + this.token },
+        });
+      } catch (e) { continue; }
+      const t1 = performance.now();
+      if (!pollResp.ok) continue;
+      let state;
+      try { state = await pollResp.json(); } catch (e) { continue; }
+      if (state && state.is_playing &&
+          typeof state.progress_ms === "number" && state.progress_ms > 0) {
+        const halfRtt = (t1 - t0) / 2;
+        this._posAnchor   = state.progress_ms + halfRtt;
+        this._posAnchorAt = t1;
+        this._playing     = true;
+        ckSpLog("connect play: anchored at " + (state.progress_ms + halfRtt).toFixed(0) +
+                "ms (progress=" + state.progress_ms + ", half-RTT=" + halfRtt.toFixed(0) +
+                "ms, after " + (i+1) + " polls)");
+        anchored = true;
+        break;
+      }
+    }
+    if (!anchored) {
+      ckSpLog("connect play: never saw is_playing=true; using tentative anchor at 0");
+      this._posAnchor   = 0;
+      this._posAnchorAt = performance.now();
+      this._playing     = true;
+    }
     this._startPolling();
   }
   async pause() {
