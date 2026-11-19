@@ -215,6 +215,20 @@
   #info .source.spotify { color: #86efac; }
   #info .source.audio   { color: #94a3b8; }
 
+  .latrow {
+    display: none; align-items: center; gap: 8px;
+    font-size: 13px; color: #94a3b8;
+    margin-top: 8px;
+  }
+  .latrow.show { display: flex; }
+  .latrow .latbtn {
+    cursor: pointer; border: 1px solid #334155; background: #1e293b;
+    color: #e8ebf0; padding: 4px 10px; border-radius: 8px;
+    font-family: inherit; font-size: 12px; font-weight: 600; min-width: 44px;
+  }
+  .latrow .latbtn:hover { background: #233245; border-color: #38bdf8; }
+  .latrow #lat_val { min-width: 60px; text-align: center; color: #e8ebf0; font-weight: 700; }
+
   #feedback {
     position: absolute; left: 50%;
     transform: translateX(-50%);
@@ -331,6 +345,13 @@
     <h1 id="i_title"></h1>
     <div id="i_meta"></div>
     <div id="i_source" class="source"></div>
+    <div class="latrow" id="lat_row">
+      <span>Audio offset:</span>
+      <button class="latbtn" id="lat_dec">−50</button>
+      <span id="lat_val">0ms</span>
+      <button class="latbtn" id="lat_inc">+50</button>
+      <span style="font-size:11px;color:#64748b;">(positive = game runs ahead of music)</span>
+    </div>
     <div id="i_skip" class="skipnote" style="display:none"></div>
     <div class="hint">
       Tap <b>SPACE</b> · click · or touch on any beat.<br>
@@ -544,6 +565,30 @@ function ckSpotifySetPreferredDevice(id, name) {
     localStorage.removeItem("ck_spotify_preferred_device_name");
   }
   renderSpotifyBar();
+}
+
+// ─── Audio-offset calibration (per device / per SDK) ────────────────────────
+// Even after anchoring to the device's reported progress, phones add their
+// own output-pipeline latency on top (~100-400ms), so the game clock can
+// still run slightly ahead of what's audible. We store one offset per
+// playback destination so a phone's offset doesn't bleed into the SDK's.
+function ckLatencyGetAll() {
+  try { return JSON.parse(localStorage.getItem("ck_spotify_latency_offsets") || "{}"); }
+  catch (e) { return {}; }
+}
+function ckLatencyGet(key) {
+  const offsets = ckLatencyGetAll();
+  return offsets[key || "sdk"] || 0;
+}
+function ckLatencySet(key, ms) {
+  const offsets = ckLatencyGetAll();
+  const k = key || "sdk";
+  if (ms) offsets[k] = ms;
+  else    delete offsets[k];
+  localStorage.setItem("ck_spotify_latency_offsets", JSON.stringify(offsets));
+}
+function ckLatencyAdjust(key, delta) {
+  ckLatencySet(key, ckLatencyGet(key) + delta);
 }
 
 // ─── Spotify debug log ───────────────────────────────────────────────────────
@@ -846,10 +891,12 @@ class SpotifyTransport {
     this._posAnchor   = Math.round(t * 1000);
     this._posAnchorAt = performance.now();
   }
+  getLatencyKey() { return "sdk"; }
   currentTime() {
-    if (!this._playing) return this._posAnchor / 1000;
+    const offsetS = ckLatencyGet(this.getLatencyKey()) / 1000;
+    if (!this._playing) return this._posAnchor / 1000 - offsetS;
     const elapsed = performance.now() - this._posAnchorAt;
-    return (this._posAnchor + elapsed) / 1000;
+    return (this._posAnchor + elapsed) / 1000 - offsetS;
   }
   onEnded(cb) { this._endedCb = cb; }
   teardown() {
@@ -1031,10 +1078,12 @@ class SpotifyConnectTransport {
     this._posAnchor   = ms;
     this._posAnchorAt = performance.now();
   }
+  getLatencyKey() { return this.deviceId; }
   currentTime() {
-    if (!this._playing) return this._posAnchor / 1000;
+    const offsetS = ckLatencyGet(this.getLatencyKey()) / 1000;
+    if (!this._playing) return this._posAnchor / 1000 - offsetS;
     const elapsed = performance.now() - this._posAnchorAt;
-    return (this._posAnchor + elapsed) / 1000;
+    return (this._posAnchor + elapsed) / 1000 - offsetS;
   }
   onEnded(cb) { this._endedCb = cb; }
   teardown() {
@@ -1210,6 +1259,16 @@ async function CK_START(slug, data) {
   } else {
     sourceEl.textContent = "Source: local audio";
     sourceEl.className   = "source audio";
+  }
+
+  // Latency widget — only meaningful for Spotify transports (local audio
+  // has no measurable latency from the game's perspective).
+  const latRow = document.getElementById("lat_row");
+  if (transport.getLatencyKey) {
+    latRow.classList.add("show");
+    refreshLatencyDisplay();
+  } else {
+    latRow.classList.remove("show");
   }
 
   document.getElementById("i_title").textContent = data.title;
@@ -1499,6 +1558,23 @@ game.addEventListener("pointerdown", (e) => {
 });
 // Suppress the default context menu inside the game so right-click can be used for phrase taps.
 game.addEventListener("contextmenu", (e) => { e.preventDefault(); });
+
+// ─── Latency HUD wiring ──────────────────────────────────────────────────────
+function refreshLatencyDisplay() {
+  if (!transport || !transport.getLatencyKey) return;
+  const key = transport.getLatencyKey();
+  document.getElementById("lat_val").textContent = ckLatencyGet(key) + "ms";
+}
+document.getElementById("lat_dec").addEventListener("click", () => {
+  if (!transport || !transport.getLatencyKey) return;
+  ckLatencyAdjust(transport.getLatencyKey(), -50);
+  refreshLatencyDisplay();
+});
+document.getElementById("lat_inc").addEventListener("click", () => {
+  if (!transport || !transport.getLatencyKey) return;
+  ckLatencyAdjust(transport.getLatencyKey(), +50);
+  refreshLatencyDisplay();
+});
 
 // ─── Spotify-bar wiring ──────────────────────────────────────────────────────
 spSignIn.addEventListener("click",  () => ckSpotifyStartLogin());
