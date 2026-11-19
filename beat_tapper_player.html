@@ -375,6 +375,7 @@
     <div class="row"><span class="lbl">Timing</span><span class="v" id="f_bias">—</span></div>
     <div class="row"><span class="lbl">Phrases</span><span class="v" id="f_phr">—</span></div>
     <div class="row"><span class="lbl">Phrase acc.</span><span class="v" id="f_phr_acc">—</span></div>
+    <button id="f_calibrate" style="display:none;background:#1DB954;margin-bottom:12px;">Apply calibration</button>
     <div class="btnrow">
       <button onclick="window.CK.playAgain()">Play Again</button>
       <button class="secondary" onclick="window.CK.returnToPicker()">Back to Picker</button>
@@ -1500,7 +1501,39 @@ function finish() {
     document.getElementById("f_phr").textContent     = "—";
     document.getElementById("f_phr_acc").textContent = "—";
   }
+  updateCalibrationButton(mean);
   summary.style.display = "block";
+}
+
+// Signed mean tap error → latency nudge. Positive mean (user tapping late)
+// means the game clock is still ahead of the music, so we add that many ms
+// to the device's offset, which subtracts further in currentTime(). Only
+// shown for Spotify transports (local audio has no latency to calibrate)
+// and only when the error is big enough to care about.
+function updateCalibrationButton(meanSec) {
+  const btn = document.getElementById("f_calibrate");
+  if (!btn) return;
+  if (!transport || !transport.getLatencyKey ||
+      !isFinite(meanSec) || Math.abs(meanSec) < 0.005) {
+    btn.style.display = "none";
+    return;
+  }
+  const deltaMs = Math.round(meanSec * 1000);
+  const key     = transport.getLatencyKey();
+  const current = ckLatencyGet(key);
+  const next    = current + deltaMs;
+  btn.style.display = "block";
+  btn.textContent = "Apply calibration: " + (deltaMs > 0 ? "+" : "") + deltaMs +
+                    "ms (offset " + current + " → " + next + ")";
+  btn.onclick = () => {
+    ckLatencyAdjust(key, deltaMs);
+    refreshLatencyDisplay();
+    btn.textContent = "Calibration applied: new offset " + ckLatencyGet(key) + "ms";
+    btn.disabled = true;
+    btn.style.opacity = "0.6";
+  };
+  btn.disabled = false;
+  btn.style.opacity = "";
 }
 
 window.CK = {
